@@ -1,6 +1,6 @@
 # dsh-prompt-inject
 
-给 DeepSeek Harness（DSH）的插件：在设置页按**注入点 → 多条规则**配置发送时注入的前后缀与 system 文本，规则可以启用/排序，并且可以只对指定的模型生效。
+这是一个适用于 Deepseek Harness（以下简称 DSH / dsh ）的插件，向用户提供 GUI 下自定义且区分模型的发送 Prompt 注入功能。
 
 面向 DSH `0.2.0-rc.2`。
 
