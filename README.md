@@ -69,6 +69,8 @@
   - 勾「全部」**不会**清空其它勾选；取消「全部」后，之前勾的模型继续生效；
   - **没勾「全部」也没勾任何模型 = 这条规则不生效**，胶囊显示「无应用」并给一句轻提示；
   - 存的模型在当前目录里找不到 → 置灰标「**已失效**」，保持勾选等你自己取消；取消前按「不匹配」处理（不注入）。
+  - 模型**增删改不用重启 dsh**：设置页跟着官方的「模型 / 设置 / 密钥变了」推送自己重拉目录，
+    新加的模型立刻能勾、删掉的模型立刻变「已失效」。重拉只换模型目录，不会碰你正在编辑的规则。
   - 「算哪个模型」以**官方的模型选择投影**为准（就是你在下拉里点的那个，含刚切换、还没发出去的），
     所以配给 A 的规则不会因为你切到同 provider 的 B 而跟进到 B 的第一条请求上。
 - **复制 / 删除**：右侧的 ⧉ / ✕ 图标按钮；删除后会弹一条提示，点里面的「撤销」会把规则**放回原来的位置**。
@@ -119,6 +121,8 @@
 
 - 设置页**不显示「当前模型」**：多会话并行时最近活跃会话未必是你正在看的那个，切换也未必及时反映，显示出来只会误导；顶部只留保存状态。规则按 `provider/model` 匹配，看卡片上的作用域结论或弹层即可。
 - 规则按 `provider/model` 匹配。模型目录拉不到的 provider 会被跳过并提示，此时只影响展示（已存的键会显示成「已失效」），不影响其它 provider 的规则。
+- 模型目录靠官方推送（`llm/adapters-updated` / `settings/document-updated` / `credentials/*-updated`）保持实时；
+  改法不走这几条事件时（例如绕过 DSH、直接手改配置文件），界面要重开一次才看到。细节见 [docs/settingGUI.md](docs/settingGUI.md)。
 - 版本声明用精确版本 `0.2.0-rc.2`。DSH 升级后如果插件管理器报 `incompatible-version`，把 `package.json` 里 `peerDependencies` 的 `0.2.0-rc.2` 与 `engines.dsh` 一起改成新版本即可；也可以放宽成 `>=0.2.0-rc.2 <0.3.0`（把 `includePrerelease` 语义交给官方校验），但要自己承担跨小版本接口变化的风险。
 - 暂不支持：注入点内拖拽排序（用 ↑ / ↓）、「当前模型下最终拼成什么」的预览区。
 
@@ -136,6 +140,8 @@ node .agents/checks/verify-panel-toggle.mjs
 node .agents/checks/verify-model-route.mjs
 
 # 需要 DSH 官方包：先按 .agents/checks/README.md 搭一份 node_modules
+node .agents/checks/verify-catalog-refresh.mjs
+node .agents/checks/verify-catalog-events.mjs
 node .agents/checks/verify-logic.mjs
 node .agents/checks/verify-config-store.mjs
 node .agents/checks/verify-host-wiring.mjs
@@ -149,4 +155,4 @@ node .agents/checks/verify-timeline.mjs
 > `verify-logic.mjs` 测的 `planRestore` 是**纯判据**：当前版本「注入永久保留、不还原」，
 > 生产路径已经不调用它，判据与测试保留是为了将来若要把「自动清除」重新做成选项时不必从零写。
 
-代码只依赖官方公开接口：`connection.fetch.register`、`systemPrompt.section`、`system-prompt/assemble`、`agent/pre-step`、`llm.listProviders/listModels`、`session.append/deriveMessages/surface/eventAt`，加 `dsh-home-paths` 与 `dsh-atomic-write`。设计依据与实验记录见 `.agents/`。
+代码只依赖官方公开接口：`connection.fetch.register`、`systemPrompt.section`、`system-prompt/assemble`、`agent/pre-step`、`llm.listProviders/listModels`、`session.append/deriveMessages/surface/eventAt`、`ctx.remote.$on`（官方的宿主事件推送），加 `dsh-home-paths` 与 `dsh-atomic-write`。设计依据与实验记录见 `.agents/`。

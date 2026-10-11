@@ -46,6 +46,7 @@ ctx.connection.fetch.register({
 | 方法 | 路径 | 用途 | 请求体 | 响应 |
 | --- | --- | --- | --- | --- |
 | GET | `/api/dsh-prompt-inject/state` | 规则 + 模型目录 + revision | — | `{ revision, slots, fields, catalog: { providers, degraded } }` |
+| GET | `/api/dsh-prompt-inject/catalog` | 只给模型目录 | — | `{ providers, degraded }` |
 | POST | `/api/dsh-prompt-inject/rules` | 覆盖写规则 | `{ revision, slots }` | `200 { revision, slots, dropped? }` / `409 { revision, slots }` / `422 { issues, dropped }` |
 
 - `catalog` 由 host 现算：`ctx.llm.listProviders()` → `listModels(provider)`，`key` 用 `"<provider>/<model>"`；某个 provider 拉不到就跳过它并把 `degraded` 置真。
@@ -56,6 +57,25 @@ ctx.connection.fetch.register({
 - **未知键宽容**：`slots` 里本版本不认识的键（例如旧版客户端的 `system.persona`）就地迁到新键或丢掉，
   记在响应的 `dropped` 里，**不整包 422**。新旧客户端短暂错位时不能把用户卡死在「保存失败」上；
   真正非法的内容（规则字段、模型列表）仍然逐条 422。
+
+## 模型目录什么时候刷新
+
+模型增删改**不用重启 dsh**，也不用刷新页面：host 与界面听的是官方同一套「模型变了」的推送。
+
+| 事件（官方推给浏览器的那几条） | 什么时候响 |
+| --- | --- |
+| `llm/adapters-updated` | provider 路由增删改（加 provider、改模型列表后适配器重挂） |
+| `settings/document-updated` | 任何设置文档落盘（模型设置页就是在写设置） |
+| `credentials/record-updated` / `credentials/reference-updated` | 密钥变了，有些模型跟着可用/不可用 |
+
+- **host 侧**（`lib/settingsApi.js`）：事件一响就**丢掉目录缓存**——只丢不清算，没人问就不花这次开销。
+  于是客户端紧接着来拉 `/catalog` 时现算，拿到的一定是新目录；30 秒 TTL 只当兜底。
+- **客户端侧**（`lib/client.js`）：照同一张表订阅（`ctx.remote.$on`），合并 150ms 后重拉一次 `/catalog`，
+  另外在 `connection/reset`（断线重连）后补拉一次。事件表在两边各写一份，`client-shape.mjs` 会对表。
+- **只换目录，不动规则**：`/catalog` 单独开一条就是为这个——设置页的规则是本地乐观更新的，
+  用户可能正在打字、还没到 500ms 提交，整包重读 `/state` 会把那份编辑冲掉。
+- 拿不到 `remote` 服务（极简壳，或网关插件还没挂）时：订阅那部分不激活，设置页照旧能开，
+  退回「打开页面时拉一次」的旧行为。老 host 没有 `/catalog`（回 404）时也是留着旧目录，不报错。
 
 ## 数据模型
 
@@ -167,6 +187,7 @@ dsh-prompt-inject                                                  [● 已保�
 - 目录没拉全（`degraded`）时列表最上面给一句说明：没列出来的模型会显示成「已失效」，免得用户以为规则坏了。
 - 点「全部」**不清空**其它勾选：勾上 = 匹配所有模型（含以后新增的）；取消后，之前勾的模型继续生效。
 - **失效模型**：存的 key 在当前目录里找不到 → 置灰标「已失效」，保持勾选等用户取消；取消前按**不匹配**处理（不注入）。host 侧同一套规则，界面与行为保持一致。
+  目录是实时刷新的（见上面「模型目录什么时候刷新」），所以模型删掉、改名之后，「已失效」会当场冒出来，不用重启宿主去找它。
 - 没勾「全部」也没选模型 = 不生效，卡片上胶囊显示「无应用」并给一句轻提示（具体模型键只在弹层里看，卡片不留）。
 - 入口有三个，都是同一件事：点卡片上的胶囊、点胶囊里的任意文字、从「模型作用域」动作进。
 

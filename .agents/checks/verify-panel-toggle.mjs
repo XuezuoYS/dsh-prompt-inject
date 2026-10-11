@@ -132,6 +132,19 @@ exports.apply({
     if (result !== null && typeof result === 'object' && typeof result.next === 'function') while (result.next().done !== true) {}
     return typeof result === 'function' ? result : () => {}
   },
+  // 「模型变了」那个子插件：这里只要不炸就行，真行为在 verify-catalog-refresh.mjs 里测。
+  inject: (_deps, callback) => {
+    callback({
+      remote: { $on: () => () => {} },
+      on: () => () => {},
+      effect: (body) => {
+        const result = body()
+        return typeof result === 'function' ? result : () => {}
+      },
+    })
+    return () => {}
+  },
+  logger: () => ({ warn: () => {} }),
   slots: {
     inject: (_name, callback) => callback(),
     register: (options, component) => {

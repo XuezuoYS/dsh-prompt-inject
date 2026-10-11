@@ -1,4 +1,5 @@
-// host 半的接线检查：端点注册、/state 与 /rules 的真实往返、system 段注册与 persona 改写。
+// host 半的接线检查：端点注册、/state 与 /rules 的真实往返、system 段注册与 persona 改写、
+// 以及「模型设置变了 → 宿主目录缓存立刻失效」（见 verify-catalog-refresh.mjs 的客户端那一半）。
 // 用假的 ctx 跑，不碰真实 DSH。
 //
 // 用法：node .agents/checks/verify-host-wiring.mjs
@@ -11,6 +12,7 @@ process.env.DSH_HOME = home
 
 const { apply, inject } = await import('../../lib/index.js')
 const { INJECT_POINTS, middleSectionPoints, replacedSectionPoints } = await import('../../lib/injectPoints.js')
+const { CATALOG_INVALIDATION_EVENTS } = await import('../../lib/settingsApi.js')
 
 const results = []
 const check = (name, ok, detail) => {
@@ -25,14 +27,24 @@ const listeners = []
 const effects = []
 const warnings = []
 
+/** provider → 它报的模型；直接改它就能模拟「模型设置变了」。 */
+const modelsByProvider = new Map([
+  ['deepseek-account', [{ id: 'deepseek-flash', name: 'deepseek-flash' }]],
+  ['broken-provider', [{ id: 'never', name: 'never' }]],
+])
+let providerListings = 0
+
 const llm = {
-  listProviders: () => [
-    { id: 'deepseek-account', displayName: 'DeepSeek 账号' },
-    { id: 'broken-provider', displayName: '拉不动的 provider' },
-  ],
+  listProviders: () => {
+    providerListings += 1
+    return [
+      { id: 'deepseek-account', displayName: 'DeepSeek 账号' },
+      { id: 'broken-provider', displayName: '拉不动的 provider' },
+    ]
+  },
   listModels: async (provider) => {
     if (provider === 'broken-provider') throw new Error('目录拉取失败')
-    return [{ provider, id: 'deepseek-flash', name: 'deepseek-flash' }]
+    return modelsByProvider.get(provider)
   },
 }
 
@@ -84,10 +96,16 @@ const ctx = {
 apply(ctx)
 
 check('inject 声明了 connection/llm/systemPrompt/sessions', JSON.stringify(inject) === JSON.stringify(['connection', 'llm', 'systemPrompt', 'sessions']), JSON.stringify(inject))
-check('注册了两个 /api 端点', routes.length === 2, routes.map((route) => route.path).join(','))
+check('注册了三个 /api 端点', routes.length === 3, routes.map((route) => route.path).join(','))
 check('state 端点路径正确', routes.some((route) => route.path === '/api/dsh-prompt-inject/state' && route.methods.includes('GET')))
+check('catalog 端点只读', routes.some((route) => route.path === '/api/dsh-prompt-inject/catalog' && JSON.stringify(route.methods) === JSON.stringify(['GET', 'HEAD'])))
 check('rules 端点只收 POST', routes.some((route) => route.path === '/api/dsh-prompt-inject/rules' && JSON.stringify(route.methods) === JSON.stringify(['POST'])))
 check('端点都在 /api 下', routes.every((route) => route.path.startsWith('/api/')))
+check(
+  '挂上了全部「目录失效」事件（与客户端半同一张表）',
+  CATALOG_INVALIDATION_EVENTS.every((event) => listeners.some((item) => item.name === event)),
+  listeners.map((item) => item.name).join(','),
+)
 
 // system 段：4 个中间锚点，名字与 order 与规格一致。
 const expectedSections = INJECT_POINTS.filter((point) => point.sectionName !== undefined)
@@ -120,6 +138,34 @@ check(
   Array.isArray(state.fields) && state.fields.map((field) => field.name).join(',') === 'model,provider,cwd' && state.fields.every((field) => typeof field.label === 'string' && typeof field.note === 'string' && field.note !== ''),
   JSON.stringify(state.fields),
 )
+
+// ---------- /catalog：只给目录，且模型设置一变就失效 ----------
+const catalogRoute = routes.find((route) => route.path === '/api/dsh-prompt-inject/catalog')
+const readCatalog = async () => (await catalogRoute.fetch(new Request('http://localhost/api/dsh-prompt-inject/catalog'))).json()
+
+const catalogBefore = await readCatalog()
+check(
+  '/catalog 只给 providers 与 degraded（不下发规则、不动规则状态）',
+  Object.keys(catalogBefore).sort().join(',') === 'degraded,providers',
+  JSON.stringify(Object.keys(catalogBefore)),
+)
+check('catalog 与 state 共用同一份缓存，没有重复问 provider', providerListings === 1, String(providerListings))
+check('catalog 里 provider 拉不动同样标记 degraded，不阻断', catalogBefore.degraded === true && catalogBefore.providers.length === 1)
+
+// 模拟「模型设置页改了模型」：provider 报的列表换了，官方接着推来失效事件。
+modelsByProvider.set('deepseek-account', [
+  { id: 'deepseek-flash', name: 'deepseek-flash' },
+  { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro' },
+])
+for (const item of listeners) if (CATALOG_INVALIDATION_EVENTS.includes(item.name)) item.listener()
+
+const catalogAfter = await readCatalog()
+check(
+  '收到失效事件后立刻能拉到新模型（不用重启 dsh、不用等 TTL）',
+  providerListings === 2 && catalogAfter.providers[0].models.map((model) => model.id).join(',') === 'deepseek-flash,deepseek-v4-pro',
+  `providerListings=${providerListings} models=${catalogAfter.providers[0].models.map((model) => model.id).join(',')}`,
+)
+check('失效事件只清缓存：紧接着再拉一次不再问 provider', providerListings === 2 && (await readCatalog()).providers[0].models.length === 2, String(providerListings))
 
 // ---------- /rules 往返 ----------
 const rulesRoute = routes.find((route) => route.path === '/api/dsh-prompt-inject/rules')

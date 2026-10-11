@@ -41,13 +41,39 @@ if (!Array.isArray(exports.inject) || exports.inject[0] !== 'slots') problems.pu
 
 const slotInjects = []
 const slotRegisters = []
+const remoteSubscriptions = []
 let effectCount = 0
-const ctx = {
-  effect: (callback) => {
-    effectCount += 1
-    const result = callback()
-    return typeof result === 'function' ? result : () => {}
+/** 照 cordis 的语义跑一次 effect body（支持返回 disposer 或生成器）。 */
+const runEffect = (callback) => {
+  effectCount += 1
+  const result = callback()
+  if (result !== null && typeof result === 'object' && typeof result.next === 'function') while (result.next().done !== true) {}
+  return typeof result === 'function' ? result : () => {}
+}
+
+/** 「模型变了」那个子插件拿到的注入上下文。 */
+const scopedCtx = {
+  remote: {
+    $on: (event, listener) => {
+      remoteSubscriptions.push({ event, listener })
+      return () => {}
+    },
   },
+  on: (name, listener) => {
+    remoteSubscriptions.push({ event: name, listener })
+    return () => {}
+  },
+  effect: runEffect,
+}
+
+const ctx = {
+  effect: runEffect,
+  inject: (deps, callback) => {
+    if (JSON.stringify(deps) !== JSON.stringify(['remote'])) problems.push(`客户端半只该 inject ['remote']，实际 ${JSON.stringify(deps)}`)
+    callback(scopedCtx)
+    return () => {}
+  },
+  logger: () => ({ warn: () => {} }),
   slots: {
     inject: (name, callback) => {
       slotInjects.push({ name, callback })
@@ -98,6 +124,15 @@ else {
     if (typeof injected?.togglePanel !== 'function') problems.push('slot inject face must expose togglePanel')
   }
 }
+
+// ---------- 与 host 的「目录失效」事件表对表 ----------
+// 客户端半是手写 bundle，事件名是内联复制的一份；改表时两边必须一起改。
+const { CATALOG_INVALIDATION_EVENTS } = await import('../../lib/settingsApi.js')
+const subscribed = remoteSubscriptions.map((item) => item.event)
+if (JSON.stringify(subscribed.filter((event) => event !== 'connection/reset')) !== JSON.stringify(CATALOG_INVALIDATION_EVENTS)) {
+  problems.push(`client 订阅的失效事件与 host 不一致：client ${JSON.stringify(subscribed)} vs host ${JSON.stringify(CATALOG_INVALIDATION_EVENTS)}`)
+}
+if (!subscribed.includes('connection/reset')) problems.push('client 必须在重连后补拉一次目录（connection/reset）')
 
 // ---------- 与 host 的注入点表对表 ----------
 // client 是手写 bundle，注入点表是内联复制的一份；改表时两边必须一起改。

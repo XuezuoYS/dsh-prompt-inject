@@ -6,7 +6,7 @@
 
 | 脚本 | 检查什么 |
 | --- | --- |
-| `client-shape.mjs` | 客户端半的 `__ModuleLoader__` 注册形状、`settings.section` 注册项、`inject` 声明 |
+| `client-shape.mjs` | 客户端半的 `__ModuleLoader__` 注册形状、`settings.section` 注册项、`inject` 声明、**订阅的「目录失效」事件与 host 表逐字一致**（另加 `connection/reset`） |
 | `verify-template-fields.mjs` | **模板字段纯逻辑**：字段表、`{{字段}}` 替换规则（认不出/取不到值/名字不合规则一律原样保留）、agent 取值与组装期合并 |
 | `verify-card-render.mjs` | 规则卡片的实际渲染：结论胶囊（全部 / 已应用 N 个模型 / 无应用 / 失效）、不再有标题与模型键、右侧四个图标动作、点胶囊与点删除分别调到哪个回调、Toast 的「撤销」动作、分组与 system 顺序、替换/插进标签、模板字段徽章与点击插入、拼错字段的轻提示 |
 | `verify-panel-toggle.mjs` | **控制器级**折叠回归：用真实 `Controller` 走「点标题 → 发布快照 → 重渲染」，验证有/无规则两种默认、来回点严格交替、各注入点互不影响、提交的 payload 只含已知键 |
@@ -37,10 +37,21 @@ node .agents/checks/read-session.mjs "$env:USERPROFILE\.dsh\sessions\--D-0-code-
 ## 二、需要官方包（`@deepseek-ai/*`）
 
 `verify-logic.mjs`（要 `dsh-llm` 系）、`verify-config-store.mjs`、`verify-host-wiring.mjs`、
-`verify-inject-flow.mjs`、`verify-derived-cache.mjs`、`verify-assemble-render.mjs` 都要 import 官方包
-（`@deepseek-ai/cordis`、`dsh-session`、`dsh-llm`、`dsh-atomic-write`、`dsh-home-paths`、`dsh-system-prompt` 等）。
+`verify-inject-flow.mjs`、`verify-derived-cache.mjs`、`verify-assemble-render.mjs`、
+`verify-catalog-refresh.mjs`、`verify-catalog-events.mjs` 都要 import 官方包
+（`@deepseek-ai/cordis`、`dsh-session`、`dsh-llm`、`dsh-atomic-write`、`dsh-home-paths`、`dsh-system-prompt`、`dsh-api-remotes` 等）。
 `verify-assemble-render.mjs` 是**真官方 SystemPrompt + 真 `renderPrompt`** 的集成回归：模板字段落位、
 没配改写的官方段仍由官方插值、没有 agent 时不炸、全不配时逐字不变。
+
+**模型目录实时刷新**那两件：
+
+- `verify-catalog-refresh.mjs`（**客户端半**）：用假宿主 + 真 `Controller` 走一遍——推送来了就重拉 `/catalog`、
+  连推三条只合并成一次、**只换目录**（规则 / revision /「保存中…」都不动）、拉失败留旧目录、
+  老 host 回 404 也不炸；第二段用**真 cordis** 验「`remote` 服务晚挂上也能补上订阅」。
+- `verify-catalog-events.mjs`（**host 半**）：先核官方白名单 `API_REMOTE_FORWARDED_EVENTS`
+  （名字不在里面 = 永远收不到推送），再用**真 cordis**（官方服务用替身）把四条事件各推一次，
+  断言目录缓存当场失效、并且插件停用后监听器与端点一起消失。
+
 DSH 发行包把官方包放在 `app.asar` 里，磁盘上没有，所以要临时抽一份出来。
 
 **临时搭法**（把发行包里的 `dsh/node_modules` 整棵抽出来 + 在仓库根挂个 `node_modules` 链接；跑完都删掉）。
@@ -59,6 +70,8 @@ New-Item -ItemType Junction -Path .\node_modules -Target "$exp\dsh\node_modules"
 node .agents/checks/verify-logic.mjs
 node .agents/checks/verify-config-store.mjs
 node .agents/checks/verify-host-wiring.mjs
+node .agents/checks/verify-catalog-events.mjs
+node .agents/checks/verify-catalog-refresh.mjs
 node .agents/checks/verify-assemble-render.mjs
 node .agents/checks/verify-inject-flow.mjs
 node .agents/checks/verify-inject-persistence.mjs
