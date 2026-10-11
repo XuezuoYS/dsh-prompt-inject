@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Prompt Inject",
+    "description": "Configure per-model prompt prefix, suffix, and system injections from Settings."
+  }
+}
