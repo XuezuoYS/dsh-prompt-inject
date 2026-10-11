@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Prompt Inject",
+    "title": "dsh-prompt-inject",
     "description": "Configure per-model prompt prefix, suffix, and system injections from Settings."
   }
 }
