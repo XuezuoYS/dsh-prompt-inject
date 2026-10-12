@@ -6,6 +6,11 @@
   "type": "module",
   "main": "lib/index.js",
   "icon": "./icon.svg",
+  "scripts": {
+    "test": "node .agents/checks/run.mjs a",
+    "test:host": "node .agents/checks/run.mjs b",
+    "test:all": "node .agents/checks/run.mjs all"
+  },
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
