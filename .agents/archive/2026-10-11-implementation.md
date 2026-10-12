@@ -29,7 +29,7 @@
 `node aside-asar-reader.cjs <list|tree|cat|extract> "<asar路径>" "<前缀>" [输出目录]`
 读取（仓库根目录的临时工具；`.agents/archive/2026-10-11-asar-reader.js` 是同一份的 CommonJS 老版本，
 但仓库根 `package.json` 现在是 `"type": "module"`，那个 `.js` 会被当 ESM，跑不起来）；
-asar 在 `C:\Users\xuezu\AppData\Local\Programs\DeepSeek Harness\resources\app.asar`。
+asar 在 Windows 桌面版的 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar`（自定义安装目录以实际路径为准）。
 解包目录用完删掉，别留在仓库里。
 
 ## 2. 交付物
@@ -53,7 +53,7 @@ dsh-prompt-inject/
 
 1. 写好后装进 desktop profile：GUI「设置 → 插件」里用本地 link 安装，或 CLI
    `dsh plugin --profile desktop add link:<本目录绝对路径>`（以实际 CLI 帮助为准）。
-2. 装完在 `C:\Users\xuezu\.dsh\profiles\desktop\cordis.patch.yml` 里应能看到本插件的条目（**不要手改这个文件**，交给插件管理器）。
+2. 装完在 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml` 里应能看到本插件的条目（**不要手改这个文件**，交给插件管理器）。
 3. 调试：host 半看 DSH 日志；client 半看浏览器控制台。
 4. 改动 `lib/client.js` 后刷新页面；host 半改动一般要重启 DSH。**以你观察到的为准**，把结论记进 `.agents/`。
 

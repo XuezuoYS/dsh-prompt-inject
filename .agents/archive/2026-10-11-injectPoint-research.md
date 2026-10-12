@@ -14,13 +14,13 @@
 
 DSH 发行包把代码打进 `app.asar`，磁盘上没有源码目录。
 
-1. 归档位置：`C:\Users\xuezu\AppData\Local\Programs\DeepSeek Harness\resources\app.asar`
-   （同目录的 `app.asar.unpacked` 只有原生模块）
+1. 归档位置：Windows 桌面版默认在 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar`
+   （同目录的 `app.asar.unpacked` 只有原生模块；自定义安装目录就以实际路径为准）
 2. 读取脚本：`node .agents/archive/2026-10-11-asar-reader.js <list|tree|cat|extract> <archive> <前缀> [输出目录]`
 3. 只解需要的包（全量约 2911 文件 / 52 MB，用完就删）：
 
    ```powershell
-   $asar = "C:\Users\xuezu\AppData\Local\Programs\DeepSeek Harness\resources\app.asar"
+   $asar = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\app.asar"
    node .agents/archive/2026-10-11-asar-reader.js extract $asar "dsh/node_modules/@deepseek-ai" ".agents\dsh"
    ```
 

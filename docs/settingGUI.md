@@ -107,7 +107,7 @@ ctx.connection.fetch.register({
 - `slots` 的键就是 [injectPoint.md](injectPoint.md) 的注入点表；**每个注入点都只是一串规则**，没有例外（persona 的头与尾是两个独立键）。
 - `models.all` 保留 `list`（「全部」不清空其它勾选就是靠它）。
 - `version` 是结构版本；`revision` 每次写入 +1。
-- 文件坏掉或版本不认：改名成 `rules.json.bad`，用空配置继续跑，不静默清空。
+- 文件坏掉或版本不认：改名成带时间戳的 `rules.json.<时间戳>.bad` 留现场，用空配置继续跑，不静默清空。
 - 写入用「读-改-写」加跨进程文件锁，落盘走原子替换，权限 `0600`。
 
 ## 界面

@@ -126,7 +126,7 @@ system 那六项的两种做法分得很清楚：
 
 `~/.dsh/dsh-prompt-inject/rules.json`（Windows 上一般是 `C:\Users\<你>\.dsh\dsh-prompt-inject\rules.json`，.dsh 文件夹路径由宿主决定）。
 
-写入走原子替换，带跨进程文件锁，权限 `0600`。文件坏掉或者结构版本不认识时，它会改名成 `rules.json.bad` 留着，然后用空配置继续跑，不会静默把你的规则清空。这个文件由插件自己读写，建议只在设置页里改。
+写入走原子替换，带跨进程文件锁，权限 `0600`。文件坏掉或者结构版本不认识时，它会带着时间戳改名成 `rules.json.<时间戳>.bad` 留着（现场可查），然后用空配置继续跑，不会静默把你的规则清空。这个文件由插件自己读写，建议只在设置页里改。
 
 结构长这样，一条规则就是一个对象，八个注入点每个都只是一串规则，没有例外：
 
@@ -184,7 +184,7 @@ system 那六项的两种做法分得很清楚：
 - 注入点表有两份：`lib/injectPoints.js` 是权威的那份，`lib/client.js` 里内联了一份一模一样的（客户端半不能 import）。改表要两边一起改，`.agents/checks/client-shape.mjs` 会检查两边是否一致。
 - `@deepseek-ai/*` 一律声明成 `peerDependencies`，不能装成本地依赖 —— 那样会变成两份模块实例，`instanceof` 和模块私有的 WeakSet 都会失效。
 - 端点开在官方 `/api` 下面，鉴权由官方那层处理，插件自己不写；所以只支持 `GET` / `HEAD` / `POST`。
-- 校验脚本分两组（纯 node 能跑的、需要先从安装包里解出官方包的），怎么跑见 [.agents/checks/README.md](.agents/checks/README.md)。
+- 校验脚本分两组：`npm test` 跑纯 node 那组（clone 下来就能验，不依赖任何官方包）；`npm run test:host` 跑要官方包那组，没临时解包会直接退出码 2 并打印怎么搭（`npm run test:all` 两类一起）。细节见 [.agents/checks/README.md](.agents/checks/README.md)。
 - host 侧代码改了要重启 dsh；只改客户端那一半刷新页面就行。
 - 项目协作规范见 [AGENTS.md](AGENTS.md)。
 
