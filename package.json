@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-inject",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "按注入点与模型作用域自定义发送时的前后缀与 system 注入",
   "type": "module",
