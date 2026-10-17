@@ -1,5 +1,5 @@
 // 按 seq 区间原样 dump 会话事件（临时排查用）。
-// 用法：node dump-session-range.mjs <session.v4.jsonl.zstd> <fromSeq> <toSeq> [最大字符数]
+// 用法：node .agents/archive/2026-10-12-dump-session-range.mjs <session.v4.jsonl.zstd> <fromSeq> <toSeq> [最大字符数]
 import { readFileSync } from 'node:fs'
 import { zstdDecompressSync } from 'node:zlib'
 

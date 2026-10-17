@@ -36,6 +36,7 @@ const groupB = [
   'verify-inject-flow.mjs',
   'verify-inject-persistence.mjs',
   'verify-derived-cache.mjs',
+  'verify-client-modules.mjs',
 ]
 
 const groupNames = { a: '第一组（纯 node）', b: '第二组（要官方包）', all: '两组全部' }

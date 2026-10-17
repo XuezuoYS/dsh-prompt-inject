@@ -32,7 +32,7 @@ ai: ai2
 | `{{provider}}` | 模型属于哪个 provider，如 `deepseek-account` |
 | `{{cwd}}` | 当前会话的工作目录绝对路径 |
 
-这三个就是官方 persona 头尾在用的变量（官方头 `You are a coding agent powered by the {{model}} model.`、官方尾 `Your working directory is {{cwd}}.`），值来自官方 agent loop 注册的变量。**「这一步算哪个模型」与规则的作用域匹配走同一条判据**（官方模型选择投影优先，见 [injectScopeAndSetting.md](injectScopeAndSetting.md)）。
+`model` / `provider` 这两个就是官方在用的提示词变量（官方 persona 头 `You are a coding agent powered by the {{model}} model.` 用的就是它们）；`cwd` 从 0.2.1 起官方不再注册，改由插件自己从会话头（`agent.session.header.cwd`）兜底取，效果一样。**「这一步算哪个模型」与规则的作用域匹配走同一条判据**（官方模型选择投影优先，见 [injectScopeAndSetting.md](injectScopeAndSetting.md)）。
 
 渲染时机：
 
@@ -43,4 +43,4 @@ ai: ai2
 
 要真的写 `{{model}}` 这几个字（不当字段用），写成 `{{ model }}` 或换个大小写就行——那些都不算字段组，会被原样保留。
 
-字段表是**静态白名单**（就是上面那三个，官方桌面部署注册的变量也就这三个），不去反射官方注册表：名字要给人看、还要配注释。别的插件自己注册的变量插件不认，写在正文里会原样保留。
+字段表是**静态白名单**（就是上面那三个，官方桌面部署 0.2.1 只注册 `model` / `provider` 两个，`cwd` 由插件自己兜底），不去反射官方注册表：名字要给人看、还要配注释。别的插件自己注册的变量插件不认，写在正文里会原样保留。

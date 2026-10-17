@@ -57,7 +57,7 @@ system 段位参照（挑 order 时看）：
 
 官方把 persona 头尾当**一个配置对**（同一行插件同时管两头）提供，但本插件的注入列表里它们是**两个并列注入点** `system.personaHead` 与 `system.personaTail`，各有自己的规则列表，不需要用户理解「二合一」这种说法：
 
-- 落地：头有规则就改写 `deployment:persona-prefix` 的文本，尾有规则就改写 `deployment:persona-suffix` 的文本；没配的那一侧**不动**（保留官方默认）。
+- 落地：头有规则就改写 `deployment:persona-prefix` 的文本，尾有规则就改写 `deployment:persona-suffix` 的文本；没配的那一侧**不动**（保留官方默认）。0.2.1 起官方尾默认就是空串，所以「尾部」基本等于纯新增，但语义仍是替换。
 - **不能**自己注册 `deployment:persona-prefix` / `-suffix`：桌面的 agent preset 已经挂了官方 persona 行，同一作用域重名注册会被**静默拒绝**（插件 fiber 进失败态，不抛错）——所以只能「替换已有段的文本」，不能「插入同名段」。
 - 改写放在 `system-prompt/assemble` 里，按 `context.agent` 取该会话与模型的规则，改完立刻生效。
 
@@ -65,7 +65,7 @@ system 段位参照（挑 order 时看）：
 
 - DSH 的 system 是 surface 第 0 节点的 `system/message`，不是请求字段；请求级 `system` 官方禁止（`request/header` 带 `header.system` 直接抛错）。
 - `agent/pre-step` 每个 step 都触发（工具循环里也触发），必须自己判断是不是用户轮。
-- 段文本里的 `{{字段}}` 由插件渲染（字段表与语义见 [injectFormat.md](injectFormat.md) 的「模板字段」），渲染完标 `interpolate: false`，官方插值器不会碰到我们注入的文本；**没配改写的那一侧官方段原样不动**（官方自己的 `{{cwd}}` 还要靠它的插值器渲染）。
+- 段文本里的 `{{字段}}` 由插件渲染（字段表与语义见 [injectFormat.md](injectFormat.md) 的「模板字段」），渲染完标 `interpolate: false`，官方插值器不会碰到我们注入的文本；**没配改写的那一侧官方段原样不动**，它自己的插值照旧归官方（0.2.1 官方只注册 `provider` / `model` 两个变量）。
 - 消息落库只发生在本步第一次尝试，流失败重试不会重复注入。
 - `order` 必须是有限数；段文本里写未注册的 `{{变量}}` 渲染时报错，要写字面 `{{` 用 `interpolate: false`。
 - 同一作用域内重名段 / context / 变量会抛错；子作用域同名覆盖父作用域。

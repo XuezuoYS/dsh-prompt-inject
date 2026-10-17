@@ -84,10 +84,10 @@ surface 里绝大多数节点都是非 user/message（指令 / 运行上下文 /
 
 - 想看官方源码得从 `app.asar` 抽。抽的时候**数据区起点是 `16 + pickledSize - 8`**，
   不是官方 reader 的 `16 + pickledSize`；用后者会把每个文件开头吃掉 8 字节（抽出来的 package.json
-  全是 `e": "@deepseek-ai/..."` 这种缺头的样子）。现成读取器：`.agents/archive/asar2.cjs`。
+  全是 `e": "@deepseek-ai/..."` 这种缺头的样子）。现成读取器：`.agents/tools/asar2.cjs`。
 - 抽出来的包要在 `node_modules/@deepseek-ai/` 下再给每个包做一层 junction，
   否则包之间的相互引用（`cordis` → `cosmokit`）解析不到。
-- 读取器还会用 `dump-surface.mjs` 把会话日志的 surface 按 `surfaceOp` 重放出来，肉眼核对节点顺序。
+- 读取器还会用 `2026-10-12-dump-surface.mjs` 把会话日志的 surface 按 `surfaceOp` 重放出来，肉眼核对节点顺序。
 
 ## 让改动生效的正确姿势
 

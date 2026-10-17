@@ -14,7 +14,9 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === undefined ? '' : ` — ${detail}`}`)
 }
 
-// 官方桌面部署的人设原文就长这样（personaPrefix / personaSuffix）。
+// 0.2.0 桌面部署的人设原文就长这样；0.2.1 起官方 `personaSuffix` 默认是空串（工作目录改由
+// runtime context 下发），官方 agent loop 也只注册 provider / model 两个变量。这里仍按老形状
+// 搭一份——它比 0.2.1 的真部署更严格，用来证明「插件不碰官方段时，官方插值器照常工作」。
 const PERSONA_PREFIX = 'You are a coding agent powered by the {{model}} model.'
 const PERSONA_SUFFIX = 'Your working directory is {{cwd}}.'
 
@@ -25,7 +27,8 @@ await root.plugin(SystemPrompt, {
   includeHarnessIdentity: true,
 })
 
-// 官方 agent loop 注册的三个变量，这里照抄一份（值都从 assemble 的 context.agent 上取）。
+// 0.2.0 的官方 agent loop 注册了这三个变量（0.2.1 只剩 provider / model）；这里照抄一份，
+// 值都从 assemble 的 context.agent 上取。
 root.systemPrompt.variable('provider', (context) => context.agent?.options.provider)
 root.systemPrompt.variable('model', (context) => context.agent?.options.model)
 root.systemPrompt.variable('cwd', (context) => context.agent?.session.header.cwd)
@@ -73,6 +76,21 @@ registerSystemSections(plain, async () => ({ revision: 1, slots: {} }), () => {}
 await new Promise((resolve) => setTimeout(resolve, 0))
 const untouched = renderPrompt(await plain.systemPrompt.assemble({ agent }))
 check('一条规则都不配时，官方头尾逐字保留', untouched.includes(PERSONA_PREFIX.replace('{{model}}', 'deepseek-flash')) && untouched.includes(PERSONA_SUFFIX.replace('{{cwd}}', 'D:\\repo')), untouched)
+
+// ---------- 0.2.1 的真实形状：官方 persona 尾默认空串、只注册 provider / model ----------
+// 尾段仍由 SystemPrompt 构造函数注册（只是文本为 ''），所以插件配了 `system.personaTail`
+// 必须还能把它改写成非空；不配则整段被官方 renderPrompt 丢掉，历史行为不变。
+const nextShape = new Context()
+await nextShape.plugin(SystemPrompt, { personaPrefix: PERSONA_PREFIX, personaSuffix: '' })
+nextShape.systemPrompt.variable('provider', (context) => context.agent?.options.provider)
+nextShape.systemPrompt.variable('model', (context) => context.agent?.options.model)
+registerSystemSections(nextShape, async () => ({ revision: 1, slots: { 'system.personaTail': { rules: [{ id: 't', enabled: true, text: '尾巴：{{model}} @ {{cwd}}', models: { all: true, list: [] } }] } } }), () => {})
+await new Promise((resolve) => setTimeout(resolve, 0))
+const nextAssembly = await nextShape.systemPrompt.assemble({ agent })
+const nextPrompt = renderPrompt(nextAssembly)
+check('0.2.1 形状：官方尾为空时，配了 system.personaTail 仍能落位', nextPrompt.includes('尾巴：deepseek-flash @ D:\\repo'), nextPrompt)
+check('0.2.1 形状：没有官方 cwd 变量时，插件从 agent 上取值渲染', !nextPrompt.includes('{{cwd}}') && !nextPrompt.includes('{{model}}'))
+check('0.2.1 形状：改写出来的段仍标 interpolate=false', nextAssembly.sections.find((section) => section.name === 'deployment:persona-suffix')?.interpolate === false)
 
 const failed = results.filter((item) => item.ok !== true)
 console.log(`\n${results.length - failed.length}/${results.length} 通过`)

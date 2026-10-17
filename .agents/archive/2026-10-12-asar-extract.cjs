@@ -1,11 +1,11 @@
-// 把 app.asar 里指定的子树抽到磁盘上（临时工具）。
-// 用法：node asar-extract.cjs <asar 路径> <asar 内子路径，如 dsh/lib> <输出目录>
+// 把 app.asar 里指定的子树抽到磁盘上（早期工具，现用 .agents/tools/asar2.cjs）。
+// 用法：node .agents/archive/2026-10-12-asar-extract.cjs <asar 路径> <asar 内子路径，如 dsh/lib> <输出目录>
 const fs = require('node:fs')
 const path = require('node:path')
 
 const [, , asarPath, innerPath, outDir] = process.argv
 if (!asarPath || !innerPath || !outDir) {
-  console.error('usage: node asar-extract.cjs <asar> <innerPath> <outDir>')
+  console.error('usage: node .agents/archive/2026-10-12-asar-extract.cjs <asar> <innerPath> <outDir>')
   process.exit(1)
 }
 

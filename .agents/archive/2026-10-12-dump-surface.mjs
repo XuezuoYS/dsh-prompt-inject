@@ -1,6 +1,6 @@
 // 把一个会话日志的 surface 还原出来：按事件重放 surfaceOp（append / replace），
 // 打印每个存活节点的 seq、角色、source.kind+turn、文本。
-// 用法：node dump-surface.mjs <session.v4.jsonl.zstd> [只看第几条起]
+// 用法：node .agents/archive/2026-10-12-dump-surface.mjs <session.v4.jsonl.zstd> [只看第几条起]
 import { readFileSync } from 'node:fs'
 import { zstdDecompressSync } from 'node:zlib'
 

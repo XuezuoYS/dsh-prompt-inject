@@ -24,7 +24,7 @@ ctx.slots.inject('settings.section', () => ctx.slots.register({
 
 - 挂官方 `settings.section` 槽位 → 设置导航里独立一项，名称就是插件名。
 - 只能注册进官方已声明的槽位；自己声明、或抢注未声明的槽位会在加载时报错。
-- UI 复用官方 `@deepseek-ai/dsh-client-ui-primitives`（Button / Switch / Input / Menu / Modal / Tag / Toast）；样式用 `--dsw-*` 设计变量，别写死颜色。
+- UI 复用官方 `@deepseek-ai/dsh-client-ui-primitives`（Button / Switch / Input / Menu / Modal / Tag / Toast）；样式用 `--dsw-*` 设计变量，别写死颜色。0.2.1 起这个包不再随 app 落盘，只作为 web 前端的 baseline 模块存在，浏览器里 `require` 照旧可用。
 
 ## 数据通道
 
@@ -142,7 +142,7 @@ dsh-prompt-inject                                                  [● 已保�
   而且规则按 `provider/model` 匹配这件事，看卡片上的作用域结论和弹层就够了。
 - 页面分两组：**用户消息**（前置词 / 后置词）与 **system 段**；system 组内按注入点在 system 里
   出现的先后排（头 0 → 950 → 3050 → 9800 → 尾 10200 → 10300），**头与尾不挨着**。
-- 每个 system 小节带一枚模式标签：`替换`（改写官方已有那段）或 `插进`（在段位新加一段），颜色区分。
+- 每个 system 小节带一枚模式标签：`替换`（改写官方已有那段）或 `插进`（在段位新加一段），颜色区分。0.2.1 起官方 persona 尾默认是空串，`system 尾部` 仍按「替换」显示——语义没变，只是替换前本来就是空的。
 - **折叠**：默认「有规则就展开」，但**用户点过之后以用户为准**（所以有规则的小节也能收起来）。
   实现上是一个 `panels: { [注入点键]: boolean }` 的显式覆盖表，而不是「只记住当前打开的那一个」。
 - 空规则时给一句引导，不要只留空白。

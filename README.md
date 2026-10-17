@@ -70,12 +70,12 @@ dsh plugin --profile web remove dsh-prompt-inject
 | 工具说明之前 | `system.beforeTools` | 新加一段 | order 950 |
 | 工具说明之后 | `system.afterTools` | 新加一段 | order 3050 |
 | 结构化输出之前 | `system.middle` | 新加一段 | order 9800 |
-| system 尾部 | `system.personaTail` | 替换官方那一段 | 官方 persona 尾（order 10200），官方用来说明当前工作目录 |
+| system 尾部 | `system.personaTail` | 替换官方那一段 | 官方 persona 尾（order 10200），0.2.1 起默认为空串 |
 | system 最末尾 | `system.last` | 新加一段 | order 10300，排在官方 persona 尾之后 |
 
 system 那六项的两种做法分得很清楚：
 
-- **替换**（头部 / 尾部）：官方本来就有这两段，插件只把它们的内容换掉。没配规则的那一侧原样不动，还是官方默认。官方段不会因为替换而消失，也不会出现重复的两段。
+- **替换**（头部 / 尾部）：官方本来就有这两段，插件只把它们的内容换掉。没配规则的那一侧原样不动，还是官方默认（0.2.1 起官方尾默认是空串）。官方段不会因为替换而消失，也不会出现重复的两段。
 - **新加一段**（工具说明之前 / 之后、结构化输出之前、system 最末尾）：官方没有对应段落，插件在指定段位加一段。没配规则时这段解析成空串，官方渲染时会直接丢掉，等于不存在，不会覆盖任何官方内容。
 
 细节和官方段位参照表见 [docs/injectPoint.md](docs/injectPoint.md)。
@@ -103,7 +103,7 @@ system 那六项的两种做法分得很清楚：
 | `{{provider}}` | 这个模型属于哪个 provider，比如 `deepseek-account` |
 | `{{cwd}}` | 当前会话工作目录的绝对路径 |
 
-它们就是官方 persona 头尾在用的那三个变量，值来自官方 agent 循环。设置页每个展开的小节顶部都有一行字段徽章，点一下就把 `{{字段}}` 插到最近编辑那条规则的光标处；一条规则都没有时，点徽章会直接新建一条。
+`model` / `provider` 就是官方在用的两个提示词变量（官方 persona 头用的就是 `{{model}}`）。`cwd` 从 0.2.1 起官方不再注册，插件自己从会话头兜底取，效果一样。设置页每个展开的小节顶部都有一行字段徽章，点一下就把 `{{字段}}` 插到最近编辑那条规则的光标处；一条规则都没有时，点徽章会直接新建一条。
 
 渲染时机：
 
@@ -161,7 +161,7 @@ system 那六项的两种做法分得很清楚：
 - 模型目录的实时更新只覆盖 dsh 自己推送的变化。直接编辑 dsh 的配置文件、或者远端 provider 自己上下架模型，这边不会自动知道 —— 刷新页面就能拿到新目录。
 - 有几道硬上限：一个注入点最多 200 条规则，单条正文最多 20000 字，一条规则最多勾 500 个模型键。超了保存会失败，并逐条告诉你哪一项有问题，已有的配置不会因此丢掉。
 - 设置页文案目前以中文为主，注入点键名和模型键保持英文原样。
-- 目标版本写死在 `engines.dsh`（现在是 `0.2.0-rc.2`）。dsh 还在 developer preview，官方明确会有破坏兼容的改动，升级 dsh 之后如果发现这个插件加载不起来，多半就是要跟着适配。
+- 目标版本写死在 `engines.dsh`（现在是 `0.2.1-rc.2`）。dsh 从 0.2.1 起会硬检查这条要求：不满足就把整个 bundle **静默跳过**（只在启动诊断的 `skippedBundles` 里留一条原因，不报错），所以升级 dsh 之后插件「不见了」，第一件事就是改这个值。dsh 还在 developer preview，破坏兼容的改动是常态。
 
 ## 开发
 
@@ -183,6 +183,7 @@ system 那六项的两种做法分得很清楚：
 
 - 注入点表有两份：`lib/injectPoints.js` 是权威的那份，`lib/client.js` 里内联了一份一模一样的（客户端半不能 import）。改表要两边一起改，`.agents/checks/client-shape.mjs` 会检查两边是否一致。
 - `@deepseek-ai/*` 一律声明成 `peerDependencies`，不能装成本地依赖 —— 那样会变成两份模块实例，`instanceof` 和模块私有的 WeakSet 都会失效。
+- 客户端半只在浏览器里 `require('@deepseek-ai/dsh-client-ui-primitives')`。从 0.2.1 起它不再是磁盘上的独立包，而是 web 前端模块表里的 baseline 模块（`require` 照样解析得到），所以 `dsh.client.inject` 里不列它；`peerDependencies` 里那份只是标版本。新版 `dsh.client` 另有 `external`（声明非 baseline 的动态包）和 `immediately`，我们都没用到。
 - 端点开在官方 `/api` 下面，鉴权由官方那层处理，插件自己不写；所以只支持 `GET` / `HEAD` / `POST`。
 - 校验脚本分两组：`npm test` 跑纯 node 那组（clone 下来就能验，不依赖任何官方包）；`npm run test:host` 跑要官方包那组，没临时解包会直接退出码 2 并打印怎么搭（`npm run test:all` 两类一起）。细节见 [.agents/checks/README.md](.agents/checks/README.md)。
 - host 侧代码改了要重启 dsh；只改客户端那一半刷新页面就行。

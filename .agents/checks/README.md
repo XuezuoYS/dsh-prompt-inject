@@ -47,12 +47,17 @@ node .agents/checks/read-session.mjs "$env:USERPROFILE\.dsh\sessions\<转义后�
 
 `verify-logic.mjs`（要 `dsh-llm` 系）、`verify-config-store.mjs`、`verify-host-wiring.mjs`、
 `verify-inject-flow.mjs`、`verify-inject-persistence.mjs`、`verify-derived-cache.mjs`、
-`verify-assemble-render.mjs`、`verify-catalog-refresh.mjs`、`verify-catalog-events.mjs`
+`verify-assemble-render.mjs`、`verify-catalog-refresh.mjs`、`verify-catalog-events.mjs`、
+`verify-client-modules.mjs`
 都要 import 官方包（`@deepseek-ai/cordis`、`dsh-session`、`dsh-llm`、`dsh-atomic-write`、
-`dsh-home-paths`、`dsh-system-prompt`、`dsh-api-remotes` 等）。
+`dsh-home-paths`、`dsh-system-prompt`、`dsh-api-remotes`、`dsh-client-modules` 等）。
 
 - `verify-assemble-render.mjs`：**真官方 SystemPrompt + 真 `renderPrompt`** 的集成回归——模板字段落位、
   没配改写的官方段仍由官方插值、没有 agent 时不炸、全不配时逐字不变。
+- `verify-client-modules.mjs`：**真官方浏览器模块系统**（`dsh-client-modules` 的 client bundle）跑一遍
+  `lib/client.js`——注册形状、`require` 是否都落在平台 seed 表（react / react/jsx-runtime / primitives）、
+  `package.json` 的 `dsh.client` 能不能过 `parseDshClient`、`inject` 里非 graph 行会被安静忽略；
+  附带负向对照（seed 少了 primitives 会立刻报 `missed the module table`）。
 - `verify-inject-persistence.mjs`、`verify-inject-flow.mjs`、`verify-derived-cache.mjs` 跑的是**真 SessionStore**（不是替身）。
   前者断言注入**永久保留**、一轮轮累积（第 N 轮就是 N 条）、顺序是「PREFIX → 该轮原文 → SUFFIX」、
   工具循环不重复注入、历史里不再有空占位。
@@ -83,13 +88,13 @@ $asar = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\app.asar"
 $flat = "$env:TEMP\dsh-pi\ok"
 $umb  = "$flat\node_modules\@deepseek-ai"
 
-# 1) 抽包。现成读取器：`.agents/archive/asar2.cjs`，用法 `list` / `read` / `extract`。
+# 1) 抽包。现成读取器：`.agents/tools/asar2.cjs`，用法 `list` / `read` / `extract`。
 #    innerPath 给到 `dsh/node_modules/@deepseek-ai`：它会剥掉这段前缀，于是每个包正好平铺成
 #    $flat\<包名>（不带作用域目录）——这是下面套 junction 的前提。
-node .agents/archive/asar2.cjs extract $asar "dsh/node_modules/@deepseek-ai" $flat
+node .agents/tools/asar2.cjs extract $asar "dsh/node_modules/@deepseek-ai" $flat
 
 # 1b)（可选）连 `dsh` 主包一起解出来，查 host 源码 / CSS 变量时用得上
-node .agents/archive/asar2.cjs extract $asar "dsh" "$flat\dsh"
+node .agents/tools/asar2.cjs extract $asar "dsh" "$flat\dsh"
 
 # 2) 套一层 @deepseek-ai 目录 —— 官方包互引（如 cordis 引 @deepseek-ai/cosmokit）
 #    要求包目录真的位于某个 node_modules/@deepseek-ai/ 下面
@@ -116,7 +121,7 @@ Remove-Item $flat -Recurse -Force
 >
 > **安装包的坑**：这份发行包的 asar 数据区起点是 `16 + pickledSize - 8`，不是官方 reader 的
 > `16 + pickledSize`；用后者会把每个文件的开头吃掉 8 字节。现成可用的读取器在
-> `.agents/archive/asar2.cjs`（`.agents/archive/2026-10-11-asar-reader.js` 是早期版本，
+> `.agents/tools/asar2.cjs`（`.agents/archive/2026-10-11-asar-reader.js` 是早期版本，
 > 而且直接 `node` 跑它会失败：仓库根 `package.json` 是 `"type": "module"`，`.js` 会被当 ESM）。
 >
 > 插件自己在运行时**不需要**这份 `node_modules`：它把 `@deepseek-ai/*` 声明成 `peerDependencies`。

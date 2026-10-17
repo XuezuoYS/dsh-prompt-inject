@@ -1,6 +1,6 @@
 # 实现记录与实测结论
 
-按 [.agents/archive/2026-10-11-implementation.md](archive/2026-10-11-implementation.md)（任务书）落地后的记录。
+按 [2026-10-11-implementation.md](2026-10-11-implementation.md)（任务书）落地后的记录。
 规格以 `docs/` 为准，这里只写「怎么做的、验过什么、还差什么」。
 
 ## 交付物现状

@@ -23,7 +23,7 @@
 | `.agents/archive/2026-10-11-verify-*.mjs` | 已验证动作的可运行脚本（照抄逻辑） |
 
 > ⬛ **本文书已归档**：任务已完成，实施记录见 [2026-10-11-impl-notes.md](2026-10-11-impl-notes.md)，
-> 验收脚本见 [checks/README.md](checks/README.md)。下面内容保留原样，只改掉了失效的工具路径。
+> 验收脚本见 [checks/README.md](../checks/README.md)。下面内容保留原样，只改掉了失效的工具路径。
 
 **看官方源码**：DSH 源码装在 asar 里，用
 `node aside-asar-reader.cjs <list|tree|cat|extract> "<asar路径>" "<前缀>" [输出目录]`
