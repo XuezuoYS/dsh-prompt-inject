@@ -198,6 +198,20 @@ check('折叠状态按组各记各的', snapshot().collapsedGroups?.[newId] !== 
 await waitSave()
 check('折叠不触发保存，payload 里也没有折叠状态', posts.length === beforeFold && !JSON.stringify(posts.at(-1) ?? {}).includes('collapsedGroups'), `posts ${beforeFold} → ${posts.length}`)
 
+// ---------- 全部折叠 / 全部展开 ----------
+controller.toggleCollapseAll()
+check('全部折叠：每个组都记下折叠状态', [thirdId, newId, secondId].every((id) => snapshot().collapsedGroups?.[id] === true), JSON.stringify(snapshot().collapsedGroups))
+controller.toggleGroupPanel(newId)
+check('单独展开一个组', snapshot().collapsedGroups?.[newId] === false)
+controller.toggleCollapseAll()
+check('还有展开组时再点仍是全部折叠', [thirdId, newId, secondId].every((id) => snapshot().collapsedGroups?.[id] === true), JSON.stringify(snapshot().collapsedGroups))
+controller.toggleCollapseAll()
+check('全部已折叠时再点全部展开', Object.keys(snapshot().collapsedGroups ?? {}).length === 0, JSON.stringify(snapshot().collapsedGroups))
+const beforeCollapseAll = posts.length
+controller.toggleCollapseAll()
+await waitSave()
+check('全部折叠不触发保存、不进 payload', posts.length === beforeCollapseAll && !JSON.stringify(posts.at(-1) ?? {}).includes('collapsedGroups'), `posts ${beforeCollapseAll} → ${posts.length}`)
+
 // ---------- 删除：先确认，取消不删，确认才删 ----------
 controller.requestRemoveGroup(newId)
 check('点删除只挂起确认', snapshot().pendingRemoveGroupId === newId, String(snapshot().pendingRemoveGroupId))

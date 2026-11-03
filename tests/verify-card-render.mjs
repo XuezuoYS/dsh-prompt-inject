@@ -357,7 +357,7 @@ function makeController() {
     return undefined
   }
   const api = { calls }
-  for (const name of ['addGroup', 'editGroup', 'editPosition', 'moveGroup', 'requestRemoveGroup', 'cancelRemoveGroup', 'confirmRemoveGroup', 'openGroupScope', 'toggleGroupPanel', 'clearToast']) {
+  for (const name of ['addGroup', 'editGroup', 'editPosition', 'moveGroup', 'requestRemoveGroup', 'cancelRemoveGroup', 'confirmRemoveGroup', 'openGroupScope', 'toggleGroupPanel', 'toggleCollapseAll', 'clearToast']) {
     api[name] = record(name)
   }
   return api
@@ -483,6 +483,30 @@ const textareasOf = (node) => findAll(node, (item) => item.type === 'textarea')
   const two = page([makeGroup({ id: 'g1' }), makeGroup({ id: 'g2', name: '第二' })], { collapsedGroups: { g1: true } })
   const twoCards = groupCards(two.rendered)
   check('折叠状态按组各算各的', twoCards[0]?.props?.['data-open'] === 'false' && twoCards[1]?.props?.['data-open'] === 'true', `${twoCards[0]?.props?.['data-open']} / ${twoCards[1]?.props?.['data-open']}`)
+}
+
+// ---------- 悬浮栏「全部折叠」 ----------
+{
+  const barOf = (rendered) => byClass(rendered, 'dshpi-bar')[0]
+  const g1 = makeGroup({ id: 'g1' })
+  const g2 = makeGroup({ id: 'g2', name: '第二' })
+  const { rendered, api } = page([g1, g2])
+  const foldAll = buttonByLabel(barOf(rendered), '全部折叠')
+  check('有组时悬浮栏有「全部折叠」按钮', foldAll !== undefined)
+  foldAll?.props?.onClick?.()
+  check('点「全部折叠」调 toggleCollapseAll()', api.calls.toggleCollapseAll?.length === 1, JSON.stringify(api.calls.toggleCollapseAll))
+
+  // 全部折叠后按钮文案换成「全部展开」。
+  const allIn = page([g1, g2], { collapsedGroups: { g1: true, g2: true } })
+  check('全部折叠后按钮变成「全部展开」', buttonByLabel(barOf(allIn.rendered), '全部展开') !== undefined)
+
+  // 只折叠了一部分时仍是「全部折叠」。
+  const partIn = page([g1, g2], { collapsedGroups: { g1: true } })
+  check('只折叠一部分时按钮仍是「全部折叠」', buttonByLabel(barOf(partIn.rendered), '全部折叠') !== undefined)
+
+  // 零组时不渲染这个按钮。
+  const noneIn = page([])
+  check('零组时不渲染「全部折叠」按钮', buttonByLabel(barOf(noneIn.rendered), '全部折叠') === undefined && buttonByLabel(barOf(noneIn.rendered), '全部展开') === undefined)
 }
 
 // ---------- 组开关 / 组名 / 位置开关都接到控制器 ----------
