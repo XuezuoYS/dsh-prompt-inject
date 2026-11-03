@@ -3,9 +3,10 @@
 //   - factory 里的 require（react / react/jsx-runtime / primitives）是否都落在平台 seed 上；
 //   - package.json 的 `dsh.client` 声明能不能过官方的 parseDshClient；
 //   - `dsh.client.inject` 里不是 boot graph 行的条目会被安静忽略（0.2.1 语义）；
+//   - 设置页注入面是 hooks.groups + 全部组动作；
 //   - 缺了 seed 时 require 会立刻报 “missed the module table”（负向对照，证明 primitives 只能由 seed 给）。
 //
-// 这是一个**手工探针**，没接进 run.mjs（要跑得先有官方包：见 tests/README.md 第二段）。
+// 属于第二组跑批（要官方包：见 tests/README.md 第二段）。
 // 用法：node tests/verify-client-modules.mjs
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -211,12 +212,11 @@ check(
     JSON.stringify({ name: registered?.options?.name, id: registered?.options?.id, order: registered?.options?.order }),
   )
   const face = registered?.options?.inject?.()
+  const groupActions = ['addGroup', 'editGroup', 'editPosition', 'moveGroup', 'requestRemoveGroup', 'cancelRemoveGroup', 'confirmRemoveGroup', 'openGroupScope', 'clearToast']
   check(
-    'inject 面 expose hooks.rules 与四个动作',
-    face?.hooks?.rules !== undefined &&
-      typeof face?.editRules === 'function' &&
-      typeof face?.openModelRule === 'function' &&
-      typeof face?.togglePanel === 'function',
+    'inject 面 expose hooks.groups 与全部组动作',
+    face?.hooks?.groups !== undefined && groupActions.every((name) => typeof face?.[name] === 'function'),
+    JSON.stringify({ hooks: Object.keys(face?.hooks ?? {}), actions: groupActions.filter((name) => typeof face?.[name] !== 'function') }),
   )
 }
 

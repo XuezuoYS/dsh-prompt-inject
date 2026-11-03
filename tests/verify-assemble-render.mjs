@@ -3,9 +3,12 @@
 // 这一份是**真集成**：真 `@deepseek-ai/dsh-system-prompt` 服务 + 真 `renderPrompt`，不是假 ctx。
 // 官方插值器遇到未注册的变量会直接抛错，所以这段必须真跑一遍。
 //
+// 配置用 v2 的 groups：一个组里的位置块就是这次要注入的文本。
+//
 // 用法：node tests/verify-assemble-render.mjs（需要官方包，见 tests/README.md）
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+import { emptyPositions } from '../lib/groupConfig.js'
 import { registerSystemSections } from '../lib/systemSections.js'
 
 const results = []
@@ -13,6 +16,21 @@ const check = (name, ok, detail) => {
   results.push({ name, ok })
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === undefined ? '' : ` — ${detail}`}`)
 }
+
+/**
+ * 造一个完整组：没给的位置补默认块。
+ * @param {string} id - 组 id。
+ * @param {string} name - 组名。
+ * @param {Record<string, { enabled: boolean, text: string }>} [positions] - 要覆盖的位置块。
+ * @returns {object} 组。
+ */
+const group = (id, name, positions = {}) => ({
+  id,
+  name,
+  enabled: true,
+  models: { all: true, list: [] },
+  positions: { ...emptyPositions(), ...positions },
+})
 
 // 0.2.0 桌面部署的人设原文就长这样；0.2.1 起官方 `personaSuffix` 默认是空串（工作目录改由
 // runtime context 下发），官方 agent loop 也只注册 provider / model 两个变量。这里仍按老形状
@@ -33,13 +51,15 @@ root.systemPrompt.variable('provider', (context) => context.agent?.options.provi
 root.systemPrompt.variable('model', (context) => context.agent?.options.model)
 root.systemPrompt.variable('cwd', (context) => context.agent?.session.header.cwd)
 
-const slots = {
-  'system.beforeTools': { rules: [{ id: 'b', enabled: true, text: '工具说明之前 @ {{cwd}}（{{model}}）', models: { all: true, list: [] } }] },
-  'system.personaHead': { rules: [{ id: 'h', enabled: true, text: '头：{{model}} / {{provider}}', models: { all: true, list: [] } }] },
-  'system.personaTail': { rules: [] },
-  'system.middle': { rules: [{ id: 'm', enabled: true, text: '拼错的 {{modle}} 与中文 {{中文}} 都原样', models: { all: true, list: [] } }] },
-}
-const readConfig = async () => ({ revision: 1, slots })
+const groups = [
+  group('g1', '组 1', {
+    'system.beforeTools': { enabled: true, text: '工具说明之前 @ {{cwd}}（{{model}}）' },
+    'system.personaHead': { enabled: true, text: '头：{{model}} / {{provider}}' },
+    'system.personaTail': { enabled: false, text: '' },
+    'system.middle': { enabled: true, text: '拼错的 {{modle}} 与中文 {{中文}} 都原样' },
+  }),
+]
+const readConfig = async () => ({ revision: 1, groups })
 registerSystemSections(root, readConfig, () => {})
 await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -67,15 +87,15 @@ const bare = await root.systemPrompt.assemble({})
 check('没有 agent 时插件渲染的段把没有值的字段原样留着', bare.sections.find((section) => section.name === 'prompt-inject:beforeTools')?.text === '工具说明之前 @ {{cwd}}（{{model}}）', bare.sections.find((section) => section.name === 'prompt-inject:beforeTools')?.text)
 check('没有 agent 时官方段原样返回', bare.sections.find((section) => section.name === 'deployment:persona-suffix')?.text === PERSONA_SUFFIX)
 
-// ---------- 全都不配：system 与装插件前逐字一致 ----------
+// ---------- 全都不配（零组）：system 与装插件前逐字一致 ----------
 const plain = new Context()
 await plain.plugin(SystemPrompt, { personaPrefix: PERSONA_PREFIX, personaSuffix: PERSONA_SUFFIX })
 plain.systemPrompt.variable('model', (context) => context.agent?.options.model)
 plain.systemPrompt.variable('cwd', (context) => context.agent?.session.header.cwd)
-registerSystemSections(plain, async () => ({ revision: 1, slots: {} }), () => {})
+registerSystemSections(plain, async () => ({ revision: 1, groups: [] }), () => {})
 await new Promise((resolve) => setTimeout(resolve, 0))
 const untouched = renderPrompt(await plain.systemPrompt.assemble({ agent }))
-check('一条规则都不配时，官方头尾逐字保留', untouched.includes(PERSONA_PREFIX.replace('{{model}}', 'deepseek-flash')) && untouched.includes(PERSONA_SUFFIX.replace('{{cwd}}', 'D:\\repo')), untouched)
+check('零组时，官方头尾逐字保留', untouched.includes(PERSONA_PREFIX.replace('{{model}}', 'deepseek-flash')) && untouched.includes(PERSONA_SUFFIX.replace('{{cwd}}', 'D:\\repo')), untouched)
 
 // ---------- 0.2.1 的真实形状：官方 persona 尾默认空串、只注册 provider / model ----------
 // 尾段仍由 SystemPrompt 构造函数注册（只是文本为 ''），所以插件配了 `system.personaTail`
@@ -84,13 +104,27 @@ const nextShape = new Context()
 await nextShape.plugin(SystemPrompt, { personaPrefix: PERSONA_PREFIX, personaSuffix: '' })
 nextShape.systemPrompt.variable('provider', (context) => context.agent?.options.provider)
 nextShape.systemPrompt.variable('model', (context) => context.agent?.options.model)
-registerSystemSections(nextShape, async () => ({ revision: 1, slots: { 'system.personaTail': { rules: [{ id: 't', enabled: true, text: '尾巴：{{model}} @ {{cwd}}', models: { all: true, list: [] } }] } } }), () => {})
+const tailGroups = [group('g1', '组 1', { 'system.personaTail': { enabled: true, text: '尾巴：{{model}} @ {{cwd}}' } })]
+registerSystemSections(nextShape, async () => ({ revision: 1, groups: tailGroups }), () => {})
 await new Promise((resolve) => setTimeout(resolve, 0))
 const nextAssembly = await nextShape.systemPrompt.assemble({ agent })
 const nextPrompt = renderPrompt(nextAssembly)
 check('0.2.1 形状：官方尾为空时，配了 system.personaTail 仍能落位', nextPrompt.includes('尾巴：deepseek-flash @ D:\\repo'), nextPrompt)
 check('0.2.1 形状：没有官方 cwd 变量时，插件从 agent 上取值渲染', !nextPrompt.includes('{{cwd}}') && !nextPrompt.includes('{{model}}'))
 check('0.2.1 形状：改写出来的段仍标 interpolate=false', nextAssembly.sections.find((section) => section.name === 'deployment:persona-suffix')?.interpolate === false)
+
+// ---------- 两个组同一个位置：按组顺序拼接、空行连接 ----------
+const twoGroupRoot = new Context()
+await twoGroupRoot.plugin(SystemPrompt, { personaPrefix: PERSONA_PREFIX, personaSuffix: PERSONA_SUFFIX })
+twoGroupRoot.systemPrompt.variable('model', (context) => context.agent?.options.model)
+const twoGroups = [
+  group('g1', '组 1', { 'system.beforeTools': { enabled: true, text: '第一组 {{model}}' } }),
+  group('g2', '组 2', { 'system.beforeTools': { enabled: true, text: '第二组 {{model}}' } }),
+]
+registerSystemSections(twoGroupRoot, async () => ({ revision: 1, groups: twoGroups }), () => {})
+await new Promise((resolve) => setTimeout(resolve, 0))
+const twoAssembly = await twoGroupRoot.systemPrompt.assemble({ agent })
+check('两个组同一位置按组顺序、空行拼接', twoAssembly.sections.find((section) => section.name === 'prompt-inject:beforeTools')?.text === '第一组 deepseek-flash\n\n第二组 deepseek-flash', twoAssembly.sections.find((section) => section.name === 'prompt-inject:beforeTools')?.text)
 
 const failed = results.filter((item) => item.ok !== true)
 console.log(`\n${results.length - failed.length}/${results.length} 通过`)

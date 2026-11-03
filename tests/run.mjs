@@ -20,8 +20,9 @@ const repoRoot = fileURLToPath(new URL('../', import.meta.url))
 const groupA = [
   'client-shape.mjs',
   'verify-template-fields.mjs',
+  'verify-groups.mjs',
   'verify-card-render.mjs',
-  'verify-panel-toggle.mjs',
+  'verify-group-editor.mjs',
   'verify-model-route.mjs',
 ]
 

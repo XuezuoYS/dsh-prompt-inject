@@ -14,11 +14,12 @@ npm run test:all    # 两类一起
 
 | 脚本 | 检查什么 |
 | --- | --- |
-| `client-shape.mjs` | 客户端半的 `__ModuleLoader__` 注册形状、`settings.section` 注册项、`inject` 声明、**订阅的「目录失效」事件与 host 表逐字一致**（另加 `connection/reset`） |
+| `client-shape.mjs` | 客户端半的 `__ModuleLoader__` 注册形状、`settings.section` 注册项、`inject` 声明、**订阅的「目录失效」事件与 host 表逐字一致**（另加 `connection/reset`）、`hooks.groups` 与组方法名 |
 | `verify-template-fields.mjs` | **模板字段纯逻辑**：字段表、`{{字段}}` 替换规则（认不出/取不到值/名字不合规则一律原样保留）、agent 取值与组装期合并 |
-| `verify-card-render.mjs` | 规则卡片的实际渲染：结论胶囊（全部 / 已应用 N 个模型 / 无应用 / 失效）、不再有标题与模型键、右侧四个图标动作、点胶囊与点删除分别调到哪个回调、Toast 的「撤销」动作、分组与 system 顺序、替换/插进标签、顶栏模板字段下拉（开合、字段+注释、mousedown 不抢焦点、Escape/点外收起、点击插入）、拼错字段的轻提示 |
-| `verify-panel-toggle.mjs` | **控制器级**折叠回归：用真实 `Controller` 走「点标题 → 发布快照 → 重渲染」，验证有/无规则两种默认、来回点严格交替、各注入点互不影响、提交的 payload 只含已知键 |
-| `verify-model-route.mjs` | **模型路由回归**：官方的模型选择投影（pending → lastUsed）压过「最近一次已提交请求」，切换模型后 A 的专属规则不会跟进到 B；投影缺失时的回退链；system 中间锚点与 persona 头/尾改写都按同一条判据走 |
+| `verify-groups.mjs` | **分组纯逻辑**：`emptyGroups()` 是 `[]`、`defaultGroup()` 形状、v1 `slots` 迁移成一个默认组（文本按顺序合并、位置开关、旧 persona 拆分）、`resolveSlot` 的组顺序/作用域/空跳过、`validateGroups` 允许空数组与未知位置进 `dropped` |
+| `verify-card-render.mjs` | 分组设置页的实际渲染：零组空状态、组卡片（开关、组名、作用域胶囊、顺序徽章、删除二次确认）、位置行（关闭一行 / 打开 textarea）、模板字段下拉与插入、拼错字段轻提示、sticky 顶栏 |
+| `verify-group-editor.mjs` | **控制器级**回归：用真实 `Controller` 走「点/改 → 发布快照 → 重渲染」，验证新增组、改名、清空名保存恢复、组开关、位置开关、上下移、删除确认与删除、删光回零组、零组新建、500ms debounce 的 payload |
+| `verify-model-route.mjs` | **模型路由回归**：官方的模型选择投影（pending → lastUsed）压过「最近一次已提交请求」，切换模型后 A 的专属组不会跟进到 B；投影缺失时的回退链；system 中间锚点与 persona 头/尾改写都按同一条判据走 |
 | `read-session.mjs` | 真机探针：把会话日志（多帧 zstd）解成「路由 / 注入 / 用户消息」时间线，核对这轮算的哪个模型、实际注入了什么 |
 
 ```powershell
@@ -26,8 +27,9 @@ npm test
 # 等价于逐个跑：
 node tests/client-shape.mjs
 node tests/verify-template-fields.mjs
+node tests/verify-groups.mjs
 node tests/verify-card-render.mjs
-node tests/verify-panel-toggle.mjs
+node tests/verify-group-editor.mjs
 node tests/verify-model-route.mjs
 ```
 
@@ -52,20 +54,30 @@ node tests/read-session.mjs "$env:USERPROFILE\.dsh\sessions\<转义后的工作�
 都要 import 官方包（`@deepseek-ai/cordis`、`dsh-session`、`dsh-llm`、`dsh-atomic-write`、
 `dsh-home-paths`、`dsh-system-prompt`、`dsh-api-remotes`、`dsh-client-modules` 等）。
 
-- `verify-assemble-render.mjs`：**真官方 SystemPrompt + 真 `renderPrompt`** 的集成回归——模板字段落位、
-  没配改写的官方段仍由官方插值、没有 agent 时不炸、全不配时逐字不变。
+- `verify-assemble-render.mjs`：**真官方 SystemPrompt + 真 `renderPrompt`** 的集成回归——组里的位置文本落位、
+  没配改写的官方段仍由官方插值、没有 agent 时不炸、零组（`groups: []`）时逐字不变、两个组同一位置按顺序拼。
 - `verify-client-modules.mjs`：**真官方浏览器模块系统**（`dsh-client-modules` 的 client bundle）跑一遍
   `lib/client.js`——注册形状、`require` 是否都落在平台 seed 表（react / react/jsx-runtime / primitives）、
-  `package.json` 的 `dsh.client` 能不能过 `parseDshClient`、`inject` 里非 graph 行会被安静忽略；
+  `package.json` 的 `dsh.client` 能不能过 `parseDshClient`、`inject` 里非 graph 行会被安静忽略、
+  注入面是 `hooks.groups` + `addGroup/editGroup/editPosition/moveGroup/...`；
   附带负向对照（seed 少了 primitives 会立刻报 `missed the module table`）。
+- `verify-config-store.mjs`：**真文件读写**——新安装零组、v2 `groups` 往返（含空数组）、409 乐观锁、
+  外部手改、坏文件 / 未知版本归档成 `.bad`、v1 `slots` 迁移成默认组并复制 `rules.json.v1.bak`、
+  读后仍是 v1、下一次保存才落 v2。
+- `verify-host-wiring.mjs`：**端点与装配接线**——`/state` 下发 `groups`（可为空）、`/rules` 收发
+  `{ revision, groups }`、旧 `{ revision, slots }` 请求体得到 422、两个组同一位置按组顺序拼、
+  persona 头 / 尾分别改写、模板字段在 system 段里渲染。
 - `verify-inject-persistence.mjs`、`verify-inject-flow.mjs`、`verify-derived-cache.mjs` 跑的是**真 SessionStore**（不是替身）。
   前者断言注入**永久保留**、一轮轮累积（第 N 轮就是 N 条）、顺序是「PREFIX → 该轮原文 → SUFFIX」、
-  工具循环不重复注入、历史里不再有空占位。
+  工具循环不重复注入、历史里不再有空占位；`verify-inject-flow.mjs` 还覆盖两个组按顺序拼、
+  关闭组 / 关闭位置 / 空文本跳过、组级模型作用域，以及 `planRestore` 的归档判据。
+- `verify-logic.mjs`：只留 `planRestore` 的归档判据回归与 `modelRoute` 的回退链（模型键怎么来）；
+  分组解析与配置校验在 `verify-groups.mjs`。
 
 **模型目录实时刷新**那两件：
 
 - `verify-catalog-refresh.mjs`（**客户端半**）：用假宿主 + 真 `Controller` 走一遍——推送来了就重拉 `/catalog`、
-  连推三条只合并成一次、**只换目录**（规则 / revision /「保存中…」都不动）、拉失败留旧目录、
+  连推三条只合并成一次、**只换目录**（分组 / revision /「保存中…」都不动）、拉失败留旧目录、
   老 host 回 404 也不炸；第二段用**真 cordis** 验「`remote` 服务晚挂上也能补上订阅」。
 - `verify-catalog-events.mjs`（**host 半**）：先核官方白名单 `API_REMOTE_FORWARDED_EVENTS`
   （名字不在里面 = 永远收不到推送），再用**真 cordis**（官方服务用替身）把四条事件各推一次，
@@ -131,7 +143,7 @@ Remove-Item $flat -Recurse -Force
 
 ## 手工探针（不断言，只打印）
 
-- `verify-timeline.mjs`（要官方包）：多轮复刻时间线，打印每轮模型实际看到的消息，肉眼核对注入落位。
+- `verify-timeline.mjs`（要官方包）：用真 SessionStore 跑多轮复刻时间线（配置是 v2 的 groups），打印每轮模型实际看到的消息，肉眼核对注入落位。
 - `read-session.mjs`（不要官方包）：解真机的会话日志，命令在第一段。
 
 这两个不会以非零码失败，所以没放进 `npm test` / `npm run test:host` 的跑批。
@@ -152,4 +164,4 @@ Select-String -Path lib\client.js -Pattern '--dsw-[a-z0-9-]+' -AllMatches |
 - 浏览器里的真实渲染（页面长什么样、卡片有没有画错）——只能靠真机看；
 - `/api` 端点在真实连接层的鉴权（脚本直接调 handler，跳过了 `admit()`）；
 - 真机上模型实际收到的请求体（要抓 provider 请求或读会话日志）；
-- textarea 里的**真实光标位置**：渲染探针没有 DOM，点字段徽章只覆盖「插到最后一条规则 / 没规则时新建一条」这条兜底路径。
+- textarea 里的**真实光标位置**：渲染探针没有 DOM，点字段徽章只覆盖「焦点 → 最近聚焦 → 第一个有非空位置的组 → 第一个组的 user.prefix → 零组先建组 1」这条回退链。

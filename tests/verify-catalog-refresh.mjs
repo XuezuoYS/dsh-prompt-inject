@@ -3,7 +3,9 @@
 //
 // 这里要盯住两件事：
 // 1. 模型设置一改就重拉（不用重启 dsh、不用刷新页面）；
-// 2. 重拉**只换目录**：规则、revision、保存状态都别动——用户可能正在打字，本地乐观更新还没提交。
+// 2. 重拉**只换目录**：分组、revision、保存状态都别动——用户可能正在打字，本地乐观更新还没提交。
+//
+// 配置是 v2 的 groups：本地编辑用 `editGroup` / `editPosition`。
 //
 // 用法：node tests/verify-catalog-refresh.mjs
 import { readFile } from 'node:fs/promises'
@@ -42,12 +44,24 @@ const CATALOG_B = {
   degraded: false,
   providers: [{ id: 'deepseek-account', displayName: 'DeepSeek', models: [{ id: 'deepseek-flash', name: 'deepseek-flash' }, { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro' }] }],
 }
+const POSITION_KEYS = ['user.prefix', 'user.suffix', 'system.personaHead', 'system.beforeTools', 'system.afterTools', 'system.middle', 'system.personaTail', 'system.last']
+/** 造一份完整的位置表。 */
+const positions = (overrides = {}) => {
+  const result = {}
+  for (const key of POSITION_KEYS) result[key] = { enabled: false, text: '' }
+  return { ...result, ...overrides }
+}
 const STATE = {
   revision: 3,
-  slots: {
-    'user.prefix': { rules: [{ id: 'r1', enabled: true, text: '一条规则', models: { all: true, list: [] } }] },
-    'user.suffix': { rules: [] },
-  },
+  groups: [
+    {
+      id: 'g1',
+      name: '组 1',
+      enabled: true,
+      models: { all: true, list: [] },
+      positions: positions({ 'user.prefix': { enabled: true, text: '一条规则' } }),
+    },
+  ],
   fields: [],
   catalog: CATALOG_A,
 }
@@ -60,14 +74,13 @@ globalThis.fetch = async (url, init) => {
     if (catalogMode === 'fail') return { ok: false, status: 500, json: async () => ({ error: 'read-catalog-failed' }) }
     return { ok: true, status: 200, json: async () => (catalogMode === 'stale' ? CATALOG_A : CATALOG_B) }
   }
-  if (init?.method === 'POST') return { ok: true, status: 200, json: async () => ({ revision: STATE.revision + 1, slots: JSON.parse(init.body).slots }) }
+  if (init?.method === 'POST') return { ok: true, status: 200, json: async () => ({ revision: STATE.revision + 1, groups: JSON.parse(init.body).groups }) }
   return { ok: true, status: 200, json: async () => STATE }
 }
 globalThis.document = { createElement: () => ({ dataset: {}, remove() {} }), head: { appendChild() {} } }
 
 // ---------- 挂载：记录子插件注入、remote 订阅与 effect ----------
 const subscriptions = []
-const disposers = []
 const scopedCtx = {
   remote: {
     $on: (event, listener) => {
@@ -109,8 +122,8 @@ exports.apply({
   get: () => undefined,
 })
 
-const controller = registers[0]?.options?.inject?.().hooks?.rules
-check('拿到真实的 Controller', controller !== undefined)
+const controller = registers[0]?.options?.inject?.().hooks?.groups
+check('拿到真实的 Controller（hooks.groups）', controller !== undefined)
 
 /** 等首次 /state 落进快照。 */
 const waitFor = async (predicate, timeoutMs = 1000) => {
@@ -133,7 +146,11 @@ const push = (event) => {
 }
 
 // ---------- 用户正在编辑（还没提交），这时模型设置变了 ----------
-controller.edit('user.prefix', (list) => [...list, { id: 'r2', enabled: true, text: '正在打字…', models: { all: true, list: [] } }])
+controller.editPosition('g1', 'user.prefix', { text: '正在打字…' })
+const edited = controller.getSnapshot()
+check('本地编辑落在 groups 上（还没提交）', edited.groups[0].positions['user.prefix'].text === '正在打字…', JSON.stringify(edited.groups[0].positions['user.prefix']))
+check('本地编辑把状态置为「保存中…」', edited.status === 'pending' && edited.message === '保存中…', `${edited.status} / ${edited.message}`)
+
 const requestsBefore = requests.filter((item) => item.endsWith('/catalog')).length
 push('llm/adapters-updated')
 await tick(300)
@@ -141,7 +158,7 @@ await tick(300)
 const refreshed = controller.getSnapshot()
 check('收到推送后重拉了目录', requests.filter((item) => item.endsWith('/catalog')).length === requestsBefore + 1, requests.filter((item) => item.endsWith('/catalog')).join(','))
 check('目录换成新的（新增的模型立刻出现在弹层里）', refreshed.catalog.providers[0].models.length === 2, JSON.stringify(refreshed.catalog.providers[0].models))
-check('重拉不动规则：用户本地那份编辑还在', refreshed.slots['user.prefix'].rules.length === 2 && refreshed.slots['user.prefix'].rules[1].text === '正在打字…')
+check('重拉不动分组：用户本地那份编辑还在', refreshed.groups[0].positions['user.prefix'].text === '正在打字…', JSON.stringify(refreshed.groups[0].positions['user.prefix']))
 check('重拉不动 revision（乐观锁要用的还是这一版）', refreshed.revision === 3, String(refreshed.revision))
 check('重拉不动保存状态（还是「保存中…」）', refreshed.status === 'pending' && refreshed.message === '保存中…', `${refreshed.status} / ${refreshed.message}`)
 
@@ -170,7 +187,12 @@ push('llm/adapters-updated')
 await tick(300)
 const afterFailure = controller.getSnapshot()
 check('拉失败时保留旧目录', afterFailure.catalog.providers[0].models.length === 2)
-check('拉失败不影响保存状态与规则', afterFailure.status === snapshotBeforeFailure.status && afterFailure.slots === snapshotBeforeFailure.slots)
+check(
+  '拉失败不影响保存状态与分组',
+  afterFailure.status === snapshotBeforeFailure.status &&
+    JSON.stringify(afterFailure.groups) === JSON.stringify(snapshotBeforeFailure.groups),
+  `${afterFailure.status}`,
+)
 
 // ---------- 老 host（没有 /catalog）也不能炸 ----------
 let oldHostFetched = 0
@@ -239,4 +261,3 @@ check('老 host 回 404 时静静留着旧目录（不抛错、不改状态）',
 const failed = problems.length
 console.log(`\n${failed === 0 ? '全部通过' : `${failed} 项失败`}`)
 process.exit(failed === 0 ? 0 : 1)
-

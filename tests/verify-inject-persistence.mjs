@@ -10,6 +10,8 @@
 // 3. 不再产生任何被抹掉的空占位；
 // 4. 工具循环里不会重复注入。
 //
+// 配置是 v2 的 groups：一个组里配 user.prefix / user.suffix 两个位置。
+//
 // 用法：node tests/verify-inject-persistence.mjs
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -17,6 +19,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { emptyPositions } from '../lib/groupConfig.js'
 
 const home = await mkdtemp(join(tmpdir(), 'dsh-pi-leak-'))
 process.env.DSH_HOME = home
@@ -33,6 +36,19 @@ const textOf = (message) =>
     .filter((block) => block.type === 'text')
     .map((block) => block.text)
     .join('')
+
+/**
+ * 造一个完整组：没给的位置补默认块。
+ * @param {Record<string, { enabled: boolean, text: string }>} positions - 要覆盖的位置块。
+ * @returns {object} 组。
+ */
+const group = (positions) => ({
+  id: 'g1',
+  name: '组 1',
+  enabled: true,
+  models: { all: true, list: [] },
+  positions: { ...emptyPositions(), ...positions },
+})
 
 const routes = []
 const listeners = new Map()
@@ -89,17 +105,19 @@ const preStep = async (messages, turn, step) => {
 const rulesRoute = routes.find((route) => route.path === '/api/dsh-prompt-inject/rules')
 const stateRoute = routes.find((route) => route.path === '/api/dsh-prompt-inject/state')
 const state = await (await stateRoute.fetch(new Request('http://localhost/state'))).json()
+check('初始状态是零组', Array.isArray(state.groups) && state.groups.length === 0, JSON.stringify(state.groups))
 await rulesRoute.fetch(
   new Request('http://localhost/rules', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       revision: state.revision,
-      slots: {
-        ...state.slots,
-        'user.prefix': { rules: [{ id: 'p', enabled: true, text: 'PREFIX', models: { all: true, list: [] } }] },
-        'user.suffix': { rules: [{ id: 's', enabled: true, text: 'SUFFIX', models: { all: true, list: [] } }] },
-      },
+      groups: [
+        group({
+          'user.prefix': { enabled: true, text: 'PREFIX' },
+          'user.suffix': { enabled: true, text: 'SUFFIX' },
+        }),
+      ],
     }),
   }),
 )

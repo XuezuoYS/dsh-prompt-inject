@@ -6,9 +6,12 @@
 // 现在判据优先读官方的模型选择投影（`modelSelection` 的 pending，与 `dsh-agent` 的
 // `installModelSelection` 同一份状态），再退回 requestContext / agent.options。
 //
+// 分组版：规则挂在「组」上，组带自己的模型作用域；位置块不单独限模型。
+// 这里用 groups / positions 的数据形状，断言「A 的组不会落到 B 身上」。
+//
 // 这个脚本只 import 插件自己的模块，因此不需要官方包：node tests/verify-model-route.mjs
 import { modelKeyOfAgent, modelKeyOfAssembly, modelKeyOfSelection, modelKeyOfSession } from '../lib/modelRoute.js'
-import { resolveSlot } from '../lib/ruleResolver.js'
+import { resolveSlot } from '../lib/groupResolver.js'
 import { registerSystemSections } from '../lib/systemSections.js'
 
 const results = []
@@ -48,14 +51,24 @@ check('没有投影时退回 requestContext（改造前行为）', modelKeyOfAge
 check('投影空、也没有 requestContext → agent.options', modelKeyOfAgent(ctxWithProjection({ pending: null, lastUsed: null }), { options: { provider: 'deepseek-account', model: 'deepseek-reasoner' } }) === REASONER)
 check('什么都没有 → null', modelKeyOfAgent(ctxWithProjection({ pending: null, lastUsed: null }), {}) === null && modelKeyOfAgent(ctxWithProjection(undefined), undefined) === null)
 
-// ---------- 4. 命中判定：A 的规则不能落到 B 身上 ----------
-const slots = {
-  'user.suffix': { rules: [{ id: 's', enabled: true, text: '【只给 flash】', models: { all: false, list: [FLASH] } }] },
-  'user.prefix': { rules: [{ id: 'p', enabled: true, text: '【给所有模型】', models: { all: true, list: [] } }] },
-}
-check('切到 reasoner：flash 专属规则不生效（原 bug：会生效）', resolveSlot(slots, 'user.suffix', modelKeyOfAgent(switched, agent)) === '')
-check('切到 reasoner：all 规则照旧生效', resolveSlot(slots, 'user.prefix', modelKeyOfAgent(switched, agent)) === '【给所有模型】')
-check('切回 flash：专属规则生效', resolveSlot(slots, 'user.suffix', modelKeyOfAgent(ctxWithProjection({ pending: { provider: 'deepseek-account', model: 'deepseek-flash' }, lastUsed: null }), agent)) === '【只给 flash】')
+// ---------- 4. 命中判定：A 的组不能落到 B 身上 ----------
+/** 造一个组：只填一个位置，作用域按参数给。 */
+const makeGroup = (id, pointKey, text, models) => ({
+  id,
+  name: id,
+  enabled: true,
+  models,
+  positions: { [pointKey]: { enabled: true, text } },
+})
+
+const groups = [
+  makeGroup('flash-only', 'user.suffix', '【只给 flash】', { all: false, list: [FLASH] }),
+  makeGroup('everyone', 'user.prefix', '【给所有模型】', { all: true, list: [] }),
+]
+check('切到 reasoner：flash 专属组不生效（原 bug：会生效）', resolveSlot(groups, 'user.suffix', modelKeyOfAgent(switched, agent)) === '')
+check('切到 reasoner：all 组照旧生效', resolveSlot(groups, 'user.prefix', modelKeyOfAgent(switched, agent)) === '【给所有模型】')
+check('切回 flash：专属组生效', resolveSlot(groups, 'user.suffix', modelKeyOfAgent(ctxWithProjection({ pending: { provider: 'deepseek-account', model: 'deepseek-flash' }, lastUsed: null }), agent)) === '【只给 flash】')
+check('组关掉后同一位置也不生效', resolveSlot(groups.map((group) => (group.id === 'everyone' ? { ...group, enabled: false } : group)), 'user.prefix', FLASH) === '')
 
 // ---------- 5. 组装期：variables 比投影更准 ----------
 check('组装结果里带 provider/model 时以它为准', modelKeyOfAssembly(ctxWithProjection({ pending: { provider: 'deepseek-account', model: 'deepseek-flash' }, lastUsed: null }), agent, { variables: { provider: 'deepseek-account', model: 'deepseek-reasoner' } }) === REASONER)
@@ -83,11 +96,20 @@ function makeSectionCtx(state) {
   return { ctx, sections, handlers }
 }
 
-const sectionRules = {
-  'system.beforeTools': { rules: [{ id: 'b', enabled: true, text: '【工具说明之前】', models: { all: false, list: [FLASH] } }] },
-  'system.personaHead': { rules: [{ id: 'h', enabled: true, text: '【新头】', models: { all: false, list: [FLASH] } }] },
-}
-const readSectionConfig = async () => ({ revision: 1, slots: sectionRules })
+// 一个只对 flash 生效的组，同时覆盖「中间锚点」与「persona 头」两个位置。
+const sectionGroups = [
+  {
+    id: 'flash-only',
+    name: 'flash only',
+    enabled: true,
+    models: { all: false, list: [FLASH] },
+    positions: {
+      'system.beforeTools': { enabled: true, text: '【工具说明之前】' },
+      'system.personaHead': { enabled: true, text: '【新头】' },
+    },
+  },
+]
+const readSectionConfig = async () => ({ revision: 1, groups: sectionGroups })
 
 /** 注册一次并等首次读配置落地（refresh 是 fire-and-forget）。 */
 async function mountSections(state) {
@@ -101,7 +123,7 @@ const switchedSections = await mountSections({ pending: { provider: 'deepseek-ac
 const beforeTools = switchedSections.sections.find((definition) => definition.name === 'prompt-inject:beforeTools')
 check('中间锚点注册上了', beforeTools !== undefined, switchedSections.sections.map((definition) => definition.name).join(', '))
 check('中间锚点：切到别的模型后不吐文本（原 bug：会吐 flash 的）', beforeTools.text({ agent }) === '')
-check('中间锚点：拿不到模型信息（null）时不吐 flash 专属规则', resolveSlot(sectionRules, 'system.beforeTools', null) === '')
+check('中间锚点：拿不到模型信息（null）时不吐 flash 专属规则', resolveSlot(sectionGroups, 'system.beforeTools', null) === '')
 const flashSections = await mountSections({ pending: { provider: 'deepseek-account', model: 'deepseek-flash' }, lastUsed: null })
 const flashBeforeTools = flashSections.sections.find((definition) => definition.name === 'prompt-inject:beforeTools')
 check('中间锚点：投影指向 flash 时正常吐出', flashBeforeTools.text({ agent }) === '【工具说明之前】', JSON.stringify(flashBeforeTools.text({ agent })))
@@ -116,10 +138,10 @@ const runAssemble = (variables) =>
 const switchedAssembly = await runAssemble({ provider: 'deepseek-account', model: 'deepseek-reasoner' })
 check('persona 改写：这次组装是别的模型 → 官方头原样保留（原 bug：会被换掉）', switchedAssembly.sections[0].text === '官方头')
 const flashAssembly = await runAssemble({ provider: 'deepseek-account', model: 'deepseek-flash' })
-check('persona 改写：这次组装是 flash → 换成规则文本', flashAssembly.sections[0].text === '【新头】')
+check('persona 改写：这次组装是 flash → 换成组里的文本', flashAssembly.sections[0].text === '【新头】')
 check('persona 改写：没配的段（尾）保持官方默认', flashAssembly.sections[1].text === '官方尾')
 const noAgentAssembly = await assemble.listener({}, {}, async () => ({ sections: officialSections(), variables: {} }))
-check('没有 agent 的组装（标题/摘要）：只有 all 规则生效，改写不动手', noAgentAssembly.sections[0].text === '官方头')
+check('没有 agent 的组装（标题/摘要）：只有 all 组生效，改写不动手', noAgentAssembly.sections[0].text === '官方头')
 
 // ---------- 收尾 ----------
 const failed = results.filter((item) => item.ok !== true)

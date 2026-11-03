@@ -1,11 +1,12 @@
-// host 半的接线检查：端点注册、/state 与 /rules 的真实往返、system 段注册与 persona 改写、
-// 以及「模型设置变了 → 宿主目录缓存立刻失效」（见 verify-catalog-refresh.mjs 的客户端那一半）。
-// 用假的 ctx 跑，不碰真实 DSH。
+// host 半的接线检查：端点注册、/state 与 /rules 的真实往返（v2 的 groups）、
+// system 段注册与 persona 改写、以及「模型设置变了 → 宿主目录缓存立刻失效」
+// （见 verify-catalog-refresh.mjs 的客户端那一半）。用假的 ctx 跑，不碰真实 DSH。
 //
 // 用法：node tests/verify-host-wiring.mjs
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { emptyPositions } from '../lib/groupConfig.js'
 
 const home = await mkdtemp(join(tmpdir(), 'dsh-prompt-inject-home-'))
 process.env.DSH_HOME = home
@@ -13,12 +14,29 @@ process.env.DSH_HOME = home
 const { apply, inject } = await import('../lib/index.js')
 const { INJECT_POINTS, middleSectionPoints, replacedSectionPoints } = await import('../lib/injectPoints.js')
 const { CATALOG_INVALIDATION_EVENTS } = await import('../lib/settingsApi.js')
+const { resolveSlot } = await import('../lib/groupResolver.js')
 
 const results = []
 const check = (name, ok, detail) => {
   results.push({ name, ok })
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === undefined ? '' : ` — ${detail}`}`)
 }
+
+/**
+ * 造一个完整组：没给的位置补默认块。
+ * @param {string} id - 组 id。
+ * @param {string} name - 组名。
+ * @param {Record<string, { enabled: boolean, text: string }>} [positions] - 要覆盖的位置块。
+ * @param {{ enabled?: boolean, models?: { all: boolean, list: string[] } }} [options] - 组级开关与作用域。
+ * @returns {object} 组。
+ */
+const group = (id, name, positions = {}, options = {}) => ({
+  id,
+  name,
+  enabled: options.enabled !== false,
+  models: options.models ?? { all: true, list: [] },
+  positions: { ...emptyPositions(), ...positions },
+})
 
 /** 收集一遍 apply 期间发生的注册。 */
 const routes = []
@@ -120,12 +138,11 @@ check('系统注入点分两类：中间锚点 4 个 + 改写官方段 2 个', m
 check('pre-step 监听器注册在最外层（prepend）', listeners.some((item) => item.name === 'agent/pre-step'))
 check('assemble 监听器已注册', listeners.some((item) => item.name === 'system-prompt/assemble'))
 
-// ---------- /state 往返 ----------
+// ---------- /state：零组也能开 ─----------
 const stateRoute = routes.find((route) => route.path === '/api/dsh-prompt-inject/state')
-const stateResponse = await stateRoute.fetch(new Request('http://localhost/api/dsh-prompt-inject/state'))
-const state = await stateResponse.json()
-check('GET /state 返回 200', stateResponse.status === 200, String(stateResponse.status))
-check('/state 带 revision 与全部注入点', state.revision === 0 && Object.keys(state.slots).length === 8, JSON.stringify(Object.keys(state.slots)))
+const readState = async () => (await stateRoute.fetch(new Request('http://localhost/api/dsh-prompt-inject/state'))).json()
+const state = await readState()
+check('GET /state 返回 200', state.revision === 0 && Array.isArray(state.groups) && state.groups.length === 0, `revision=${state.revision} groups=${JSON.stringify(state.groups)}`)
 check(
   '/state 不再下发「当前模型」（多会话并行时它不准，界面也不再显示）',
   state.catalog.current === undefined && Object.keys(state.catalog).sort().join(',') === 'degraded,providers',
@@ -167,54 +184,93 @@ check(
 )
 check('失效事件只清缓存：紧接着再拉一次不再问 provider', providerListings === 2 && (await readCatalog()).providers[0].models.length === 2, String(providerListings))
 
-// ---------- /rules 往返 ----------
+// ---------- /rules 往返（groups） ----------
 const rulesRoute = routes.find((route) => route.path === '/api/dsh-prompt-inject/rules')
-const payload = {
-  revision: 0,
-  slots: {
-    ...state.slots,
-    'user.prefix': { rules: [{ id: 'r1', enabled: true, text: '总是用中文回答', models: { all: true, list: [] } }] },
-  },
+/**
+ * 发一次 POST /rules。
+ * @param {unknown} body - 请求体（对象会被序列化；字符串原样发）。
+ * @returns {Promise<{ status: number, body: object }>} 状态码与解析后的响应体。
+ */
+const postRules = async (body) => {
+  const response = await rulesRoute.fetch(
+    new Request('http://localhost/api/dsh-prompt-inject/rules', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    }),
+  )
+  return { status: response.status, body: await response.json() }
 }
-const writeResponse = await rulesRoute.fetch(
-  new Request('http://localhost/api/dsh-prompt-inject/rules', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  }),
-)
-const written = await writeResponse.json()
-check('POST /rules 写入成功并 revision+1', writeResponse.status === 200 && written.revision === 1, `${writeResponse.status} / ${written.revision}`)
 
-const staleResponse = await rulesRoute.fetch(
-  new Request('http://localhost/api/dsh-prompt-inject/rules', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  }),
-)
-const stale = await staleResponse.json()
-check('过期 revision 得到 409 与最新内容', staleResponse.status === 409 && stale.revision === 1 && stale.slots['user.prefix'].rules[0].text === '总是用中文回答')
+const legacyShape = await postRules({ revision: 0, slots: { 'user.prefix': { rules: [] } } })
+check('旧 { revision, slots } 请求体得到 422（提示刷新页面）', legacyShape.status === 422, JSON.stringify(legacyShape.body))
 
-const invalidResponse = await rulesRoute.fetch(
-  new Request('http://localhost/api/dsh-prompt-inject/rules', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ revision: 1, slots: { 'user.prefix': { rules: [{ id: 'x', enabled: 'yes', text: 't', models: { all: true, list: [] } }] } } }),
-  }),
-)
-const invalid = await invalidResponse.json()
-check('非法规则得到 422 与 issues', invalidResponse.status === 422 && invalid.issues.length > 0, JSON.stringify(invalid.issues))
-
-const brokenJson = await rulesRoute.fetch(new Request('http://localhost/api/dsh-prompt-inject/rules', { method: 'POST', body: '{oops' }))
+const brokenJson = await postRules('{oops')
 check('坏 JSON 得到 422', brokenJson.status === 422, String(brokenJson.status))
 
-const missingRevision = await rulesRoute.fetch(
-  new Request('http://localhost/api/dsh-prompt-inject/rules', { method: 'POST', body: JSON.stringify({ slots: state.slots }) }),
-)
+const missingRevision = await postRules({ groups: [] })
 check('缺 revision 得到 422', missingRevision.status === 422, String(missingRevision.status))
 
-// ---------- persona 头 / 尾改写（两个独立注入点） ----------
+const twoGroups = [
+  group('g1', '组 1', {
+    'user.prefix': { enabled: true, text: '前 1' },
+    'system.beforeTools': { enabled: true, text: '中 1 {{model}}' },
+    'system.personaHead': { enabled: true, text: '头 {{model}}' },
+  }),
+  group('g2', '组 2', {
+    'user.prefix': { enabled: true, text: '前 2' },
+    'system.beforeTools': { enabled: true, text: '中 2' },
+    'system.personaHead': { enabled: true, text: '第二组头' },
+  }),
+]
+const written = await postRules({ revision: 0, groups: twoGroups })
+check('POST /rules 写入 groups 成功并 revision+1', written.status === 200 && written.body.revision === 1, `${written.status} / ${written.body.revision}`)
+check('写入结果原样带回 groups', written.body.groups.length === 2 && written.body.groups[0].id === 'g1', JSON.stringify(written.body.groups?.map((item) => item.id)))
+
+const afterWrite = await readState()
+check('GET /state 能读回两个组', afterWrite.groups.length === 2 && afterWrite.groups[1].name === '组 2')
+check(
+  '两个组同一个位置按组顺序用空行拼接',
+  resolveSlot(afterWrite.groups, 'user.prefix', 'deepseek-account/deepseek-flash') === '前 1\n\n前 2',
+  resolveSlot(afterWrite.groups, 'user.prefix', 'deepseek-account/deepseek-flash'),
+)
+check(
+  '组里的位置文本会在解析时按模型取值（模板字段稍后渲染）',
+  resolveSlot(afterWrite.groups, 'system.beforeTools', 'deepseek-account/deepseek-flash') === '中 1 {{model}}\n\n中 2',
+  resolveSlot(afterWrite.groups, 'system.beforeTools', 'deepseek-account/deepseek-flash'),
+)
+
+const staleResponse = await postRules({ revision: 0, groups: twoGroups })
+check(
+  '过期 revision 得到 409 与服务端最新 groups',
+  staleResponse.status === 409 && staleResponse.body.revision === 1 && staleResponse.body.groups?.length === 2,
+  `${staleResponse.status} / ${staleResponse.body.revision}`,
+)
+
+const invalidResponse = await postRules({
+  revision: 1,
+  groups: [{ ...group('bad', '坏组'), enabled: 'yes' }],
+})
+check('非法组（enabled 非布尔）得到 422 与 issues', invalidResponse.status === 422 && Array.isArray(invalidResponse.body.issues) && invalidResponse.body.issues.length > 0, JSON.stringify(invalidResponse.body.issues))
+
+const notArrayResponse = await postRules({ revision: 1, groups: 'nope' })
+check('groups 不是数组得到 422', notArrayResponse.status === 422, String(notArrayResponse.status))
+
+const strayGroup = group('stray', '未知位置', { 'user.prefix': { enabled: true, text: '保留的' } })
+strayGroup.positions['user.unknown'] = { enabled: true, text: '要丢掉' }
+const strayResponse = await postRules({ revision: 1, groups: [strayGroup] })
+check(
+  '未知位置键不整包报错：200 + dropped',
+  strayResponse.status === 200 && strayResponse.body.dropped.length > 0 && JSON.stringify(strayResponse.body.dropped).includes('user.unknown'),
+  JSON.stringify(strayResponse.body.dropped),
+)
+check('未知位置键没有落进配置', (await readState()).groups[0].positions['user.unknown'] === undefined)
+
+const emptyResponse = await postRules({ revision: 2, groups: [] })
+check('空 groups 也是合法请求：200、revision+1、groups = []', emptyResponse.status === 200 && emptyResponse.body.revision === 3 && Array.isArray(emptyResponse.body.groups) && emptyResponse.body.groups.length === 0, `${emptyResponse.status} / ${JSON.stringify(emptyResponse.body)}`)
+check('写完空 groups 后 /state 也是零组', (await readState()).groups.length === 0)
+
+// ---------- 组装：零组时官方默认保留 ----------
 const assemble = listeners.find((item) => item.name === 'system-prompt/assemble').listener
 const assembly = {
   sections: [
@@ -226,45 +282,46 @@ const assembly = {
   tools: [],
   variables: {},
 }
-const passthroughBefore = await assemble(assembly, {}, async () => assembly)
-check('都没配时原样返回（官方默认保留）', passthroughBefore.sections[1].text === '官方头' && passthroughBefore.sections[2].text === '官方尾')
+const passthrough = await assemble(assembly, {}, async () => assembly)
+check('零组时原样返回（官方默认保留）', passthrough.sections[1].text === '官方头' && passthrough.sections[2].text === '官方尾')
 
-/** 写一次规则。 */
-const writeSlots = async (revision, patch) => {
-  const response = await rulesRoute.fetch(
-    new Request('http://localhost/api/dsh-prompt-inject/rules', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ revision, slots: { ...(await currentSlots()), ...patch } }),
-    }),
-  )
-  return response.json()
+// ---------- persona 头 / 尾改写（两个独立位置） ----------
+/** 等一拍，让 system 段读一次写后的配置（refresh 是异步的）。 */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 50))
+
+/** 再写一份分组，等 system 段刷新。 */
+const writeGroups = async (revision, groups) => {
+  const response = await postRules({ revision, groups })
+  await settle()
+  return response
 }
-/** 读当前 slots。 */
-const currentSlots = async () => (await (await stateRoute.fetch(new Request('http://localhost/state'))).json()).slots
 
-const withHead = JSON.parse(JSON.stringify(assembly))
-const headWritten = await writeSlots(written.revision, {
-  'system.personaHead': { rules: [{ id: 'h', enabled: true, text: '我的头 {{不能插值}}', models: { all: true, list: [] } }] },
-})
-// 组装用的是同步读到的缓存，写完后会刷新；这里直接等一拍。
-await new Promise((resolve) => setTimeout(resolve, 50))
-const rewritten = await assemble(withHead, {}, async () => withHead)
-check('只配头：官方头被替换', rewritten.sections[1].text === '我的头 {{不能插值}}', rewritten.sections[1].text)
-check('只配头：段被标成不插值（文本已由插件渲染完）', rewritten.sections[1].interpolate === false)
-check('只配头：官方尾原样保留（尾是独立注入点）', rewritten.sections[2].text === '官方尾', rewritten.sections[2].text)
+const personaWrite = await writeGroups(3, twoGroups)
+check('重新写入两个组（persona / 中段）', personaWrite.status === 200 && personaWrite.body.revision === 4, `${personaWrite.status}`)
 
+const withHead = { ...JSON.parse(JSON.stringify(assembly)), variables: { provider: 'deepseek-account', model: 'deepseek-flash', cwd: 'D:\\repo' } }
+const rewritten = await assemble(withHead, { agent: ctx.agents.list()[0] }, async () => withHead)
+check(
+  'persona 头按两个组顺序拼接并渲染模板字段',
+  rewritten.sections[1].text === '头 deepseek-flash\n\n第二组头',
+  rewritten.sections[1].text,
+)
+check('改写后的段被标成不插值（文本已由插件渲染完）', rewritten.sections[1].interpolate === false)
+check('没配的官方尾原样保留（尾是独立位置）', rewritten.sections[2].text === '官方尾', rewritten.sections[2].text)
+
+const tailWrite = await writeGroups(4, [
+  group('tail', '尾巴组', { 'system.personaTail': { enabled: true, text: '我的尾' } }),
+])
+check('再写入只配尾的组', tailWrite.status === 200 && tailWrite.body.revision === 5, `${tailWrite.status}`)
 const withTail = JSON.parse(JSON.stringify(assembly))
-const tailWritten = await writeSlots(headWritten.revision, {
-  'system.personaHead': { rules: [] },
-  'system.personaTail': { rules: [{ id: 't', enabled: true, text: '我的尾', models: { all: true, list: [] } }] },
-})
-await new Promise((resolve) => setTimeout(resolve, 50))
 const tailRewritten = await assemble(withTail, {}, async () => withTail)
 check('只配尾：官方尾被替换', tailRewritten.sections[2].text === '我的尾', tailRewritten.sections[2].text)
 check('只配尾：官方头原样保留', tailRewritten.sections[1].text === '官方头', tailRewritten.sections[1].text)
 
-// ---------- 模板字段：插件自己渲染，官方不再碰 {{ ----------
+// ---------- 模板字段：位置文本由插件渲染，官方不再碰 {{ ----------
+// 回到两个组的配置，检查中间锚点的模板字段。
+await writeGroups(5, twoGroups)
+
 /**
  * 造一份带中间锚点的组装结果：中间锚点的文本照官方 assemble 的做法，
  * 直接问注册时拿到的 `text(context)` provider，`variables` 是官方这次算出来的字段值。
@@ -283,25 +340,19 @@ const templateAssembly = (variables, context = {}) => ({
   variables,
 })
 
-const templateWritten = await writeSlots(tailWritten.revision, {
-  'system.personaHead': { rules: [{ id: 'h2', enabled: true, text: '头：{{model}}', models: { all: true, list: [] } }] },
-  'system.personaTail': { rules: [] },
-  'system.beforeTools': { rules: [{ id: 'b2', enabled: true, text: '目录 {{cwd}}，模型 {{model}}', models: { all: true, list: [] } }] },
-})
-await new Promise((resolve) => setTimeout(resolve, 50))
 const filled = templateAssembly({ provider: 'deepseek-account', model: 'deepseek-flash', cwd: 'D:\\repo' })
 const rendered = await assemble({}, { agent: ctx.agents.list()[0] }, async () => filled)
-check('模板字段：persona 头里的 {{model}} 换成值', rendered.sections[1].text === '头：deepseek-flash', rendered.sections[1].text)
-check('模板字段：中间锚点里的 {{cwd}} / {{model}} 都换成值', rendered.sections[2].text === '目录 D:\\repo，模型 deepseek-flash', rendered.sections[2].text)
-check('模板字段：插件拥有的段一律标 interpolate=false（官方插值器不会再看到 {{）', rendered.sections[1].interpolate === false && rendered.sections[2].interpolate === false)
+check('模板字段：persona 头里的 {{model}} 换成值', rendered.sections[1].text === '头 deepseek-flash\n\n第二组头', rendered.sections[1].text)
+check('模板字段：两个组的中间锚点按顺序拼接、{{model}} 都换成值', rendered.sections[2].text === '中 1 deepseek-flash\n\n中 2', rendered.sections[2].text)
+check('模板字段：插件拥有的段一律标 interpolate=false', rendered.sections[1].interpolate === false && rendered.sections[2].interpolate === false)
 check('模板字段：官方自己的段不动', rendered.sections[3].text === '官方尾' && rendered.sections[3].interpolate === undefined)
 
 const noValues = templateAssembly({})
 const missing = await assemble({}, {}, async () => noValues)
-check('取不到值：{{model}} 原样保留，不抛错', missing.sections[1].text === '头：{{model}}' && missing.sections[2].text === '目录 {{cwd}}，模型 {{model}}', `${missing.sections[1].text} | ${missing.sections[2].text}`)
+check('取不到值：{{model}} 原样保留，不抛错', missing.sections[1].text === '头 {{model}}\n\n第二组头' && missing.sections[2].text === '中 1 {{model}}\n\n中 2', `${missing.sections[1].text} | ${missing.sections[2].text}`)
 
 const agentFallback = await assemble({}, { agent: { options: { provider: 'deepseek-account', model: 'deepseek-v4-pro' }, session: { header: { cwd: 'E:\\fallback' } } } }, async () => templateAssembly({}))
-check('取不到官方变量时退回 agent 上的值', agentFallback.sections[1].text === '头：deepseek-v4-pro' && agentFallback.sections[2].text === '目录 E:\\fallback，模型 deepseek-v4-pro', `${agentFallback.sections[1].text} | ${agentFallback.sections[2].text}`)
+check('取不到官方变量时退回 agent 上的值', agentFallback.sections[1].text === '头 deepseek-v4-pro\n\n第二组头' && agentFallback.sections[2].text === '中 1 deepseek-v4-pro\n\n中 2', `${agentFallback.sections[1].text} | ${agentFallback.sections[2].text}`)
 
 // system 末尾锚点必须排在官方 persona 尾之后。
 const lastPoint = INJECT_POINTS.find((point) => point.key === 'system.last')
@@ -328,8 +379,6 @@ check(
   JSON.stringify([...placement].sort((a, b) => a.at - b.at).map((item) => `${item.key}@${item.at}`)),
 )
 check('页面顺序里头尾不挨着', placement.findIndex((item) => item.key === 'system.personaHead') < placement.findIndex((item) => item.key === 'system.personaTail'))
-void tailWritten
-void templateWritten
 
 const failed = results.filter((result) => !result.ok)
 console.log(`\n${results.length - failed.length}/${results.length} 通过`)

@@ -1,10 +1,10 @@
 # 注入位置
 
-相关：[injectFormat.md](injectFormat.md)（注入格式）、[injectScopeAndSetting.md](injectScopeAndSetting.md)（配置模型）、[settingGUI.md](settingGUI.md)（设置界面）。
+相关：[injectFormat.md](injectFormat.md)（注入格式）、[injectScopeAndSetting.md](injectScopeAndSetting.md)（组与作用域）、[settingGUI.md](settingGUI.md)（设置界面）。
 
 ## 注入点
 
-每条注入点下的规则怎么配（多条规则、顺序、启用、作用域模型），见 [injectScopeAndSetting.md](injectScopeAndSetting.md)。
+每个组在每个注入点各有一个输入块。同一个位置，所有「组启用 + 作用域命中 + 位置启用 + 文字非空」的组按组顺序用空行拼起来；一份都没有就是空，不注入。组怎么配、顺序怎么排，见 [injectScopeAndSetting.md](injectScopeAndSetting.md)。
 
 | 注入点 | 位置 | 官方锚点 | 实现 | 语义 |
 | --- | --- | --- | --- | --- |
@@ -17,7 +17,7 @@
 | `system.personaTail` | system 尾 | `deployment:persona-suffix`（order 10200） | 同头，改写这一段 | **替换**官方尾 |
 | `system.last` | system 最末尾（persona 尾之后） | order 10300 | 全局 `section()` + 函数式 `text` | 插入新段 |
 
-**上面这张表的顺序就是它们在 system 里出现的先后**（设置页也按这个顺序排，头与尾不挨着）。
+**上面这张表的顺序就是它们在 system 里出现的先后**（设置页组内的位置也按这个顺序排，头与尾不挨着）。
 
 两种语义分得很清楚：
 
@@ -47,7 +47,7 @@ system 段位参照（挑 order 时看）：
   注入消息就作为普通上下文块留在会话历史里，一轮轮累积。
 - **代价**：上一轮的后置词会留在下一轮上下文里，夹在上一轮原文与下一轮输入之间，模型会当成「用户又补充了一句」。
   这是有意保留注入换来的，属正常现象，不是 bug。
-- 触发规则：认领到用户消息 → 只注入，不做还原；没有用户消息（工具循环的续跑）→ 什么都不做。
+- 触发条件：认领到用户消息 → 只注入，不做还原；没有用户消息（工具循环的续跑）→ 什么都不做。
 - 用户那条消息本身**不改**（它是聊天记录的真源），前后缀必须是独立消息。
 - 只剩一处扫尾：老版本留在历史里的空占位节点（`prompt-inject` 且内容为空）仍会被顺手清掉。
 
@@ -55,11 +55,11 @@ system 段位参照（挑 order 时看）：
 
 ## system 头与尾（替换官方段）
 
-官方把 persona 头尾当**一个配置对**（同一行插件同时管两头）提供，但本插件的注入列表里它们是**两个并列注入点** `system.personaHead` 与 `system.personaTail`，各有自己的规则列表，不需要用户理解「二合一」这种说法：
+官方把 persona 头尾当**一个配置对**（同一行插件同时管两头）提供，但本插件里它们是**两个并列位置** `system.personaHead` 与 `system.personaTail`，每个组各有一块文字，不需要用户理解「二合一」这种说法：
 
-- 落地：头有规则就改写 `deployment:persona-prefix` 的文本，尾有规则就改写 `deployment:persona-suffix` 的文本；没配的那一侧**不动**（保留官方默认）。0.2.1 起官方尾默认就是空串，所以「尾部」基本等于纯新增，但语义仍是替换。
+- 落地：所有组在头部拼出来的文字非空，就改写 `deployment:persona-prefix` 的文本；尾部同理改写 `deployment:persona-suffix`。拼出来是空串的那一侧**不动**（保留官方默认）。0.2.1 起官方尾默认就是空串，所以「尾部」基本等于纯新增，但语义仍是替换。
 - **不能**自己注册 `deployment:persona-prefix` / `-suffix`：桌面的 agent preset 已经挂了官方 persona 行，同一作用域重名注册会被**静默拒绝**（插件 fiber 进失败态，不抛错）——所以只能「替换已有段的文本」，不能「插入同名段」。
-- 改写放在 `system-prompt/assemble` 里，按 `context.agent` 取该会话与模型的规则，改完立刻生效。
+- 改写放在 `system-prompt/assemble` 里，按 `context.agent` 取该会话与模型的组配置，改完立刻生效。
 
 ## 约束
 
@@ -75,7 +75,7 @@ system 段位参照（挑 order 时看）：
 ## 背景资料
 
 这一节记「为什么这么设计」，想动注入机制前先读这里。调研对象是 DSH 0.2.0-rc.2 的发行包
-（官方代码打进 `app.asar`，抽包手法见 [tests/README.md](tests/README.md) 第二节）。
+（官方代码打进 `app.asar`，抽包手法见 [tests/README.md](../tests/README.md) 第二节）。
 
 ### 四个决定架构的事实
 

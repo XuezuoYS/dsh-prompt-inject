@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "@xuezuoys/dsh-prompt-inject",
-    "description": "Provide users with a custom, model-specific prompt injection feature for sending in GUI groups."
+    "description": "Configure prompt injection by group and model, with per-position switches for prefixes, suffixes, and system sections."
   }
 }

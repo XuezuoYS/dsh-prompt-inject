@@ -2,6 +2,8 @@
 // 把每一轮模型实际看到的消息（deriveMessages）逐条打印出来。
 // 用来肉眼核对「上一轮的前后缀到底有没有留在下一轮」这类问题。
 //
+// 配置用 v2 的 groups（一个组里配 user.prefix / user.suffix）。
+//
 // 用法：node tests/verify-timeline.mjs
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -9,6 +11,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { isAppendSurfaceEvent } from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { emptyPositions } from '../lib/groupConfig.js'
 
 const home = await mkdtemp(join(tmpdir(), 'dsh-pi-timeline-'))
 process.env.DSH_HOME = home
@@ -22,6 +25,19 @@ const textOf = (message) =>
     .join('')
 
 const kindOf = (message) => `${message?.source?.kind ?? '?'}${message?.source?.turn === undefined ? '' : `#${message.source.turn}`}`
+
+/**
+ * 造一个完整组：没给的位置补默认块。
+ * @param {Record<string, { enabled: boolean, text: string }>} positions - 要覆盖的位置块。
+ * @returns {object} 组。
+ */
+const group = (positions) => ({
+  id: 'g1',
+  name: '组 1',
+  enabled: true,
+  models: { all: true, list: [] },
+  positions: { ...emptyPositions(), ...positions },
+})
 
 const routes = []
 const listeners = new Map()
@@ -84,11 +100,12 @@ await rulesRoute.fetch(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       revision: state.revision,
-      slots: {
-        ...state.slots,
-        'user.prefix': { rules: [{ id: 'p', enabled: true, text: '【前置】', models: { all: true, list: [] } }] },
-        'user.suffix': { rules: [{ id: 's', enabled: true, text: '【后置】', models: { all: true, list: [] } }] },
-      },
+      groups: [
+        group({
+          'user.prefix': { enabled: true, text: '【前置】' },
+          'user.suffix': { enabled: true, text: '【后置】' },
+        }),
+      ],
     }),
   }),
 )

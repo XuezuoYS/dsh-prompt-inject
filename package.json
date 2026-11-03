@@ -34,7 +34,7 @@
   },
   "meta": {
     "title": "@xuezuoys/dsh-prompt-inject",
-    "description": "在设置页按注入点与模型自定义发送前后缀和 system 注入"
+    "description": "在设置页按组与模型自定义发送前后缀和 system 注入"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",

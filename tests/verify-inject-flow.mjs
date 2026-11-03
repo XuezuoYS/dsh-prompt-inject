@@ -1,6 +1,8 @@
 // 端到端（host 侧）：用真实 SessionStore 跑「注入 → 工具循环 → 下一轮还原 → 再注入」，
 // 并核对每一轮模型实际会看到的消息。不碰真实 DSH，用的是临时 DSH_HOME。
 //
+// 配置是 v2 的 groups：组按顺序拼，组作用于模型，位置块可以单独关。
+//
 // 用法：node tests/verify-inject-flow.mjs
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,6 +10,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { isAppendSurfaceEvent } from '@deepseek-ai/dsh-session'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { emptyPositions } from '../lib/groupConfig.js'
 
 const home = await mkdtemp(join(tmpdir(), 'dsh-prompt-inject-home-'))
 process.env.DSH_HOME = home
@@ -25,6 +28,22 @@ const textOf = (message) =>
     .filter((block) => block.type === 'text')
     .map((block) => block.text)
     .join('')
+
+/**
+ * 造一个完整组：没给的位置补默认块。
+ * @param {string} id - 组 id。
+ * @param {string} name - 组名。
+ * @param {Record<string, { enabled: boolean, text: string }>} [positions] - 要覆盖的位置块。
+ * @param {{ enabled?: boolean, models?: { all: boolean, list: string[] } }} [options] - 组级开关与作用域。
+ * @returns {object} 组。
+ */
+const group = (id, name, positions = {}, options = {}) => ({
+  id,
+  name,
+  enabled: options.enabled !== false,
+  models: options.models ?? { all: true, list: [] },
+  positions: { ...emptyPositions(), ...positions },
+})
 
 // ---------- 假的 host 环境 ----------
 const routes = []
@@ -94,25 +113,36 @@ const commit = (decision) => {
   for (const message of decision.messages) session.append('user/message', message, { surfaceOp: 'append' })
 }
 
-// 先配好规则：前置词对全部模型生效，后置词只对别的模型生效。
 const rulesRoute = routes.find((route) => route.path === '/api/dsh-prompt-inject/rules')
 const stateRoute = routes.find((route) => route.path === '/api/dsh-prompt-inject/state')
-const state = await (await stateRoute.fetch(new Request('http://localhost/state'))).json()
-await rulesRoute.fetch(
-  new Request('http://localhost/rules', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      revision: state.revision,
-      slots: {
-        ...state.slots,
-        'user.prefix': { rules: [{ id: 'p', enabled: true, text: '【前置词】', models: { all: true, list: [] } }] },
-        'user.suffix': { rules: [{ id: 's', enabled: true, text: '【后置词】', models: { all: true, list: [] } }] },
-        'system.beforeTools': { rules: [{ id: 'b', enabled: true, text: '【工具说明之前】', models: { all: true, list: [] } }] },
-      },
+const readState = async () => (await stateRoute.fetch(new Request('http://localhost/state'))).json()
+
+/**
+ * 用当前 revision 整包写一次分组。
+ * @param {Array<object>} groups - 新分组。
+ * @returns {Promise<object>} 写入结果。
+ */
+const writeGroups = async (groups) => {
+  const current = await readState()
+  const response = await rulesRoute.fetch(
+    new Request('http://localhost/rules', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ revision: current.revision, groups }),
     }),
+  )
+  return response.json()
+}
+
+// 先配好规则：一个组负责前后缀与 system 中间段，全部模型生效。
+const firstWrite = await writeGroups([
+  group('g1', '组 1', {
+    'user.prefix': { enabled: true, text: '【前置词】' },
+    'user.suffix': { enabled: true, text: '【后置词】' },
+    'system.beforeTools': { enabled: true, text: '【工具说明之前】' },
   }),
-)
+])
+check('写入第一个组后 revision = 1', firstWrite.revision === 1, String(firstWrite.revision))
 
 // ---------- 第 1 轮 ----------
 const claimedOne = createUserMessage({ content: [{ type: 'text', text: '第一条用户输入' }], source: { kind: 'user', rpcId: 'rpc-1' } })
@@ -169,56 +199,76 @@ check('真源里两条原文的 rpcId 都还在', appendEvents.filter((event) =>
 
 // ---------- system 段文本 ----------
 const sectionsRoute = listeners.get('system-prompt/assemble')
-check('system 段注册后可解析出文本（走 section 的 text 函数）', true)
 const beforeToolsText = await (async () => {
-  // 直接验证解析：从 section 定义里拿不到 ctx，这里用 /state 里的规则与 resolver 对齐。
-  const { resolveSlot } = await import('../lib/ruleResolver.js')
-  const refreshed = await (await stateRoute.fetch(new Request('http://localhost/state'))).json()
-  return resolveSlot(refreshed.slots, 'system.beforeTools', 'deepseek-account/deepseek-flash')
+  const { resolveSlot } = await import('../lib/groupResolver.js')
+  const refreshed = await readState()
+  return resolveSlot(refreshed.groups, 'system.beforeTools', 'deepseek-account/deepseek-flash')
 })()
-check('system.beforeTools 的文本按规则拼出', beforeToolsText === '【工具说明之前】', beforeToolsText)
+check('system.beforeTools 的文本按组里的位置拼出', beforeToolsText === '【工具说明之前】', beforeToolsText)
 check('assemble 监听器已注册（persona 改写）', Array.isArray(sectionsRoute) && sectionsRoute.length === 1)
+check('/state 的 catalog 列出两个模型', (await readState()).catalog.providers[0].models.length === 2)
 
-// ---------- 模型作用域 ----------
-const answerState = await (await stateRoute.fetch(new Request('http://localhost/state'))).json()
-check('/state 的 catalog 列出两个模型', answerState.catalog.providers[0].models.length === 2)
+// ---------- 两个组按顺序拼 ----------
+await writeGroups([
+  group('order-1', '顺序 1', { 'user.prefix': { enabled: true, text: '【第一组】' } }),
+  group('order-2', '顺序 2', { 'user.prefix': { enabled: true, text: '【第二组】' } }),
+])
+const orderClaimed = createUserMessage({ content: [{ type: 'text', text: '顺序原文' }], source: { kind: 'user', rpcId: 'rpc-order' } })
+const orderDecision = await preStep([orderClaimed], 10, 1)
+check(
+  '两个组同一个位置：按组顺序用空行拼成一条注入',
+  orderDecision.messages.map(textOf).join('|') === '【第一组】\n\n【第二组】|顺序原文',
+  orderDecision.messages.map(textOf).join('|'),
+)
 
-// ---------- 模型路由回归：切换后不能用上一个模型的规则 ----------
-// 真机 bug：用户把会话从 flash 切到同 provider 的另一个模型后，「配给 flash 的规则」被打进了新模型的第一条请求。
-// 这里把会话日志里的 request/context 固定成 flash（= 已提交的旧路由），再让投影说「下一个是 other」，
-// 模拟切换刚发生、新请求还没落库的那一刻。
-session.append('turn/start', { turn: 3 })
-session.append('request/context', { provider: 'deepseek-account', model: 'deepseek-flash' })
-check('构造成立：requestContext 停在旧模型 flash', session.requestContext()?.model === 'deepseek-flash')
+// ---------- 关闭组 / 关闭位置 / 空文本都跳过 ----------
+await writeGroups([
+  group('skip-1', '正常 1', { 'user.prefix': { enabled: true, text: '【正常】' } }),
+  group('skip-2', '停用组', { 'user.prefix': { enabled: true, text: '【停用组】' } }, { enabled: false }),
+  group('skip-3', '关闭位置', { 'user.prefix': { enabled: false, text: '【关闭位置】' } }),
+  group('skip-4', '空文本', { 'user.prefix': { enabled: true, text: '' } }),
+  group('skip-5', '正常 2', { 'user.prefix': { enabled: true, text: '【正常 2】' } }),
+])
+const skipClaimed = createUserMessage({ content: [{ type: 'text', text: '跳过原文' }], source: { kind: 'user', rpcId: 'rpc-skip' } })
+const skipDecision = await preStep([skipClaimed], 11, 1)
+check(
+  '关闭的组、关闭的位置、空文本都不参与拼接',
+  skipDecision.messages.map(textOf).join('|') === '【正常】\n\n【正常 2】|跳过原文',
+  skipDecision.messages.map(textOf).join('|'),
+)
 
-const scopedState = await (await stateRoute.fetch(new Request('http://localhost/state'))).json()
+// ---------- 模型作用域：两个组各有自己的作用域 ----------
+const scopedState = await readState()
 await rulesRoute.fetch(
   new Request('http://localhost/rules', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       revision: scopedState.revision,
-      slots: {
-        ...scopedState.slots,
-        'user.prefix': {
-          rules: [
-            { id: 'p1', enabled: true, text: '【前置词】', models: { all: true, list: [] } },
-            { id: 'p2', enabled: true, text: '【只给 flash】', models: { all: false, list: ['deepseek-account/deepseek-flash'] } },
-          ],
-        },
-        'user.suffix': { rules: [] },
-      },
+      groups: [
+        group('scope-all', '全部模型', { 'user.prefix': { enabled: true, text: '【前置词】' } }),
+        group('scope-flash', '只给 flash', { 'user.prefix': { enabled: true, text: '【只给 flash】' } }, { models: { all: false, list: ['deepseek-account/deepseek-flash'] } }),
+        group('scope-other', '只给 other', { 'user.prefix': { enabled: true, text: '【只给 other】' } }, { models: { all: false, list: ['deepseek-account/other'] } }),
+      ],
     }),
   }),
 )
+
+// ---------- 模型路由回归：切换后不能用上一个模型的组 ----------
+// 真机 bug：用户把会话从 flash 切到同 provider 的另一个模型后，「配给 flash 的组」被打进了新模型的第一条请求。
+// 这里把会话日志里的 request/context 固定成 flash（= 已提交的旧路由），再让投影说「下一个是 other」，
+// 模拟切换刚发生、新请求还没落库的那一刻。
+session.append('turn/start', { turn: 3 })
+session.append('request/context', { provider: 'deepseek-account', model: 'deepseek-flash' })
+check('构造成立：requestContext 停在旧模型 flash', session.requestContext()?.model === 'deepseek-flash')
 
 projectionState.pending = { provider: 'deepseek-account', model: 'other' }
 projectionState.lastUsed = { provider: 'deepseek-account', model: 'deepseek-flash' }
 const claimedThree = createUserMessage({ content: [{ type: 'text', text: '切换后的第一条输入' }], source: { kind: 'user', rpcId: 'rpc-3' } })
 const decisionThree = await preStep([claimedThree], 3, 1)
 check(
-  '切到同 provider 的另一个模型：flash 专属规则不再跟进（原 bug：会跟进）',
-  decisionThree.messages.map(textOf).join('|') === '【前置词】|切换后的第一条输入',
+  '切到同 provider 的另一个模型：flash 专属组不再跟进，other 专属组生效',
+  decisionThree.messages.map(textOf).join('|') === '【前置词】\n\n【只给 other】|切换后的第一条输入',
   decisionThree.messages.map(textOf).join('|'),
 )
 
@@ -226,13 +276,13 @@ projectionState.pending = { provider: 'deepseek-account', model: 'deepseek-flash
 const claimedFour = createUserMessage({ content: [{ type: 'text', text: '切回 flash' }], source: { kind: 'user', rpcId: 'rpc-4' } })
 const decisionFour = await preStep([claimedFour], 4, 1)
 check(
-  '切回 flash：专属规则照旧拼进去',
+  '切回 flash：flash 专属组照旧拼进去',
   decisionFour.messages.map(textOf).join('|') === '【前置词】\n\n【只给 flash】|切回 flash',
   decisionFour.messages.map(textOf).join('|'),
 )
 
 // ---------- 模板字段：注入那一刻就渲染成成品 ----------
-const templateState = await (await stateRoute.fetch(new Request('http://localhost/state'))).json()
+const templateState = await readState()
 check('/state 带上了模板字段表（唯一真源在 templateFields.js）', Array.isArray(templateState.fields) && templateState.fields.map((field) => field.name).join(',') === 'model,provider,cwd')
 await rulesRoute.fetch(
   new Request('http://localhost/rules', {
@@ -240,20 +290,11 @@ await rulesRoute.fetch(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       revision: templateState.revision,
-      slots: {
-        ...templateState.slots,
-        'user.prefix': {
-          rules: [
-            {
-              id: 'tpl',
-              enabled: true,
-              text: '模型 {{model}}（{{provider}}），目录 {{cwd}}；拼错的 {{modle}} 原样',
-              models: { all: true, list: [] },
-            },
-          ],
-        },
-        'user.suffix': { rules: [] },
-      },
+      groups: [
+        group('tpl', '模板字段', {
+          'user.prefix': { enabled: true, text: '模型 {{model}}（{{provider}}），目录 {{cwd}}；拼错的 {{modle}} 原样' },
+        }),
+      ],
     }),
   }),
 )

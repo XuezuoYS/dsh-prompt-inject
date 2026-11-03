@@ -1,11 +1,15 @@
-// 轻量渲染探针：把规则卡片渲染成纯文本 / 元素清单，检查卡片的文案与交互接线。
+// 轻量渲染探针：把分组设置页渲染成纯文本 / 元素清单，检查结构、文案与交互接线。
 //
 // 只 stub React / jsx-runtime / 官方原语：`jsx(type, props)` 遇到函数组件就继续往里渲染
 // （`keep` 可以指定某些组件不展开，方便直接读它收到的 props），不需要 DOM，也不需要 DSH 运行时。
 //
+// 页面形状（分组版）：顶栏（悬浮 + 模板字段下拉）→ 若干组卡片 → 每组 8 个位置行。
+// 零组时只给一块居中空状态。
+//
 // 用法：node tests/verify-card-render.mjs
 import { readFile } from 'node:fs/promises'
 import { TEMPLATE_FIELDS } from '../lib/templateFields.js'
+import { INJECT_POINTS } from '../lib/injectPoints.js'
 
 const problems = []
 const check = (name, ok, detail) => {
@@ -13,13 +17,26 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === undefined ? '' : ` — ${detail}`}`)
 }
 
+const POINT_KEYS = INJECT_POINTS.map((point) => point.key)
+/** 行标题用注入点表的中文短标签（client 内联表与 host 的 label 一致）。 */
+const LABELS = {
+  'user.prefix': '用户前置词',
+  'user.suffix': '用户后置词',
+  'system.personaHead': 'system 头部',
+  'system.beforeTools': '工具说明之前',
+  'system.afterTools': '工具说明之后',
+  'system.middle': '结构化输出之前',
+  'system.personaTail': 'system 尾部',
+  'system.last': 'system 最末尾',
+}
+
 // ---------- 最小 React / jsx 替身 ----------
-// 有状态版：顶栏「模板字段」下拉靠 useState 开合，探针要能手把手点开它再点字段。
-// 槽位按下标分配（同 React 的 hook 顺序）：树里不止它一个 useState（模型弹层还有搜索词），
-// 单槽会互相覆盖；stateSlots 跨渲染保留（开合状态要活到下一次渲染），stateIndex 每趟渲染清零。
+// 有状态版：模板字段下拉的开合、作用域弹层的草稿都靠 useState。
+// 槽位按下标分配（同 React 的 hook 顺序），stateSlots 跨渲染保留，stateIndex 每趟渲染清零。
 let stateSlots = []
 let stateIndex = 0
-let effectSlot
+let effectSlots = []
+let effectIndex = 0
 const react = {
   useState: (initial) => {
     const index = stateIndex++
@@ -31,15 +48,18 @@ const react = {
       },
     ]
   },
-  // 每个渲染先清理上一个 effect 再重跑：够探针模拟「Escape / 点外面收菜单」。
+  // 每个渲染先清理上一趟同下标的 effect 再重跑：够探针模拟「Escape / 点外面收菜单」。
   useEffect: (body) => {
-    if (effectSlot?.cleanup !== undefined) effectSlot.cleanup()
+    const index = effectIndex++
+    if (effectSlots[index]?.cleanup !== undefined) effectSlots[index].cleanup()
     const cleanup = body()
-    effectSlot = { cleanup: typeof cleanup === 'function' ? cleanup : undefined }
+    effectSlots[index] = { cleanup: typeof cleanup === 'function' ? cleanup : undefined }
   },
   useMemo: (factory) => factory(),
-  // 真的 ref 在无 DOM 环境里不会被挂上元素，客户端半的「插到光标处」会走「插到最后一条规则」的兜底。
+  // 真的 ref 在无 DOM 环境里不会被挂上元素，客户端半的「插到光标处」会走回退链。
+  // 探针在 render() 里自己调用 ref，并把假元素挂在 `__element` 上给测试当光标用。
   useRef: (initial) => ({ current: initial }),
+  Fragment: Symbol('Fragment'),
   createElement: () => null,
 }
 
@@ -63,7 +83,21 @@ function render(node, keep = () => false) {
     if (keep(node.type.name ?? String(node.type))) return node
     return render(node.type({ ...(node.props ?? {}), key: undefined }), keep)
   }
-  return { ...node, props: { ...(node.props ?? {}), children: render(node.props?.children, keep) } }
+  const rendered = { ...node, props: { ...(node.props ?? {}), children: render(node.props?.children, keep) } }
+  // 模拟 React 的 ref 回调：假元素的光标默认在文本末尾（和打字后的真实情况一致）。
+  if (typeof rendered.props.ref === 'function') {
+    const value = typeof rendered.props.value === 'string' ? rendered.props.value : ''
+    const element = {
+      value,
+      selectionStart: value.length,
+      selectionEnd: value.length,
+      focus() {},
+      setSelectionRange() {},
+    }
+    rendered.__element = element
+    rendered.props.ref(element)
+  }
+  return rendered
 }
 
 /**
@@ -99,6 +133,12 @@ function stringsOf(node, out = []) {
   return out
 }
 
+/** 节点的 class 列表里有没有某一项（允许 `a b` 多个）。 */
+const hasClass = (node, name) => typeof node.props?.className === 'string' && node.props.className.split(/\s+/).includes(name)
+
+/** 按 class 收集（整页或某棵子树）。 */
+const byClass = (node, name) => findAll(node, (item) => hasClass(item, name))
+
 /** 树里所有 className。 */
 function classNamesOf(node, out = []) {
   if (node === null || typeof node !== 'object') return out
@@ -111,27 +151,7 @@ function classNamesOf(node, out = []) {
   return out
 }
 
-/**
- * 从整页树里切出「规则卡片」那一棵子树（class 含 dshpi-card）。
- * 断言只看卡片，避免把顶部状态栏之类的文案算进来。
- * @param {*} node - 展开后的元素树。
- * @returns {object[]} 卡片子树。
- */
-function cardsOf(node, out = []) {
-  if (node === null || typeof node !== 'object') return out
-  if (Array.isArray(node)) {
-    for (const item of node) cardsOf(item, out)
-    return out
-  }
-  if (typeof node.props?.className === 'string' && node.props.className.split(' ').includes('dshpi-card')) {
-    out.push(node)
-    return out
-  }
-  cardsOf(node.props?.children, out)
-  return out
-}
-
-/** 官方原语替身：渲染成带名字的元素，props 原样保留。 */
+/** 官方原语替身：渲染成带名字的元素，props 原样保留。未知原语按需生成。 */
 function makePrimitives() {
   const stub = (name) => {
     const Component = function Stub(props) {
@@ -146,7 +166,7 @@ function makePrimitives() {
     return { type: 'Toast', props: { ...(props ?? {}) } }
   }
   Toast.displayName = 'Toast'
-  return {
+  const table = {
     Button: stub('Button'),
     Switch: stub('Switch'),
     Tag: stub('Tag'),
@@ -160,9 +180,22 @@ function makePrimitives() {
     IconCopyOutlineRegular: stub('IconCopyOutlineRegular'),
     IconCloseOutlineRegular: stub('IconCloseOutlineRegular'),
   }
+  // 新 UI 可能用到别的图标：没列出来的按名字现造一个，避免把「原语没 stub」当成真 bug。
+  return new Proxy(table, {
+    get(target, key) {
+      if (key === 'lastToastProps') return target.lastToastProps
+      if (typeof key !== 'string') return undefined
+      if (!(key in target)) target[key] = stub(key)
+      return target[key]
+    },
+    set(target, key, value) {
+      target[key] = value
+      return true
+    },
+  })
 }
 
-/** 传给客户端半的那一份原语替身（会被就地写入 lastToastProps）。 */
+/** 传给客户端半的那一份原语替身（Toast 会把 props 写回来）。 */
 const primitives = makePrimitives()
 
 // ---------- 加载客户端半 ----------
@@ -179,32 +212,27 @@ const exports = registrations[0].factory((specifier) => {
   throw new Error(`unexpected require: ${specifier}`)
 })
 
-// ---------- 顶栏下拉菜单的探针场景辅助 ----------
 /** document 监听登记表：effect 挂的「点外面 / Escape 收菜单」从这里取。 */
 const docListeners = new Map()
 
-/** 每个下拉菜单场景前重置 state/effect 替身与 document 监听。 */
-function resetMenuProbe() {
+/** 每个场景前重置 state/effect 替身与 document 监听。 */
+function resetProbe() {
   stateSlots = []
   stateIndex = 0
-  if (effectSlot?.cleanup !== undefined) effectSlot.cleanup()
-  effectSlot = undefined
+  for (const slot of effectSlots) slot?.cleanup?.()
+  effectSlots = []
+  effectIndex = 0
   docListeners.clear()
+  primitives.lastToastProps = undefined
+  if (globalThis.document !== undefined) globalThis.document.activeElement = undefined
 }
 
-/** 渲染一整页：每趟把 hook 下标清零（开合状态留在 stateSlots 里跨渲染用）。 */
+/** 渲染一整页：每趟把 hook 下标清零（状态留在 stateSlots 里跨渲染用）。 */
 function renderPage(tree) {
   stateIndex = 0
+  effectIndex = 0
   return render(tree)
 }
-
-/** 找页面里的下拉触发钮 / 面板 / 菜单项。 */
-const triggerOf = (node) => findAll(node, (item) => item.props?.className === 'dshpi-fieldmenu-trigger')
-const popOf = (node) => findAll(node, (item) => typeof item.props?.className === 'string' && item.props.className.split(' ').includes('dshpi-fieldmenu-pop'))
-const itemsOf = (node) => findAll(node, (item) => typeof item.props?.className === 'string' && item.props.className.split(' ').includes('dshpi-fieldmenu-item'))
-
-/** 渲染「用户前置词里有一条规则」的页面（下拉菜单场景的公共输入）。 */
-const menuSlots = () => slotsWithRules([rule('r1', '前缀', { all: true, list: [] })])
 
 const registers = []
 globalThis.fetch = async () => ({ ok: false, status: 0, json: async () => ({}) })
@@ -251,7 +279,7 @@ exports.apply({
 const SettingsView = registers[0]?.component
 check('拿到设置页组件', typeof SettingsView === 'function')
 
-const POINT_KEYS = ['user.prefix', 'user.suffix', 'system.personaHead', 'system.personaTail', 'system.beforeTools', 'system.afterTools', 'system.middle', 'system.last']
+// ---------- 场景辅助 ----------
 const CATALOG = {
   degraded: false,
   providers: [
@@ -266,363 +294,509 @@ const CATALOG = {
     },
   ],
 }
+const FLASH = 'deepseek-account/deepseek-flash'
+const PRO = 'deepseek-account/deepseek-v4-pro'
+
+/** 造一份完整位置表。 */
+function basePositions() {
+  const positions = {}
+  for (const key of POINT_KEYS) positions[key] = { enabled: false, text: '' }
+  return positions
+}
+
+/**
+ * 造一个组。
+ * @param {object} [patch] - 覆盖的字段；`positions` 会与默认位置表合并。
+ * @returns {object} 组。
+ */
+function makeGroup(patch = {}) {
+  return {
+    id: 'g1',
+    name: '工作',
+    enabled: true,
+    models: { all: true, list: [] },
+    positions: basePositions(),
+    ...patch,
+    positions: { ...basePositions(), ...(patch.positions ?? {}) },
+  }
+}
+
+/** 造一个「某个位置开着且有正文」的组。 */
+function groupWithText(id, name, pointKey, text) {
+  return makeGroup({ id, name, positions: { [pointKey]: { enabled: true, text } } })
+}
 
 /**
  * 造一份页面状态。
- * @param {object} slots - 注入点的规则。
- * @param {object} [patch] - 额外覆盖的字段（panels / toast / …）。
+ * @param {Array<object>} groups - 组列表。
+ * @param {object} [patch] - 额外覆盖的字段（pendingRemoveGroupId / toast / …）。
  * @returns {object} 状态。
  */
-function makeState(slots, patch = {}) {
+function makeState(groups, patch = {}) {
   return {
     status: 'saved',
     message: '已保存',
     revision: 1,
-    slots,
+    groups,
     fields: TEMPLATE_FIELDS,
     catalog: CATALOG,
-    panels: {},
-    openModelRule: undefined,
+    pendingRemoveGroupId: undefined,
+    openGroupScope: undefined,
     toast: undefined,
     ...patch,
   }
 }
 
+/** 记录控制器调用的替身：视图用 props 上的方法或 hooks.groups 都记到同一本账。 */
+function makeController() {
+  const calls = {}
+  const record = (name) => (...args) => {
+    if (calls[name] === undefined) calls[name] = []
+    calls[name].push(args)
+    if (name === 'addGroup') return 'g-new'
+    return undefined
+  }
+  const api = { calls }
+  for (const name of ['addGroup', 'editGroup', 'editPosition', 'moveGroup', 'requestRemoveGroup', 'cancelRemoveGroup', 'confirmRemoveGroup', 'openGroupScope', 'clearToast']) {
+    api[name] = record(name)
+  }
+  return api
+}
+
 /**
  * 调用设置页组件，返回**未展开**的元素树（保留 onClick 之类原始 props）。
- * @param {object} slots - 注入点的规则。
+ * @param {Array<object>} groups - 组列表。
  * @param {object} [patch] - 额外状态。
- * @param {object} [hooks] - 额外的 props 替身（editRules / openModelRule / removeRule / …）。
- * @returns {object} 元素树。
+ * @param {object} [hooks] - 额外的 props 替身。
+ * @returns {{ tree: object, api: object }} 元素树与调用记录。
  */
-function settingsTree(slots, patch = {}, hooks = {}) {
-  return SettingsView({
-    useRules: (selector) => selector(makeState(slots, patch)),
-    editRules: () => {},
-    openModelRule: () => {},
-    removeRule: () => {},
-    togglePanel: () => {},
-    clearToast: () => {},
+function settingsTree(groups, patch = {}, hooks = {}) {
+  const api = makeController()
+  const state = makeState(groups, patch)
+  const props = {
+    useGroups: (selector) => selector(state),
+    hooks: { groups: api },
+    ...api,
     ...hooks,
-  })
+  }
+  return { tree: SettingsView(props), api }
 }
 
-/** 造一份空 slots。 */
-function baseSlots() {
-  const slots = {}
-  for (const key of POINT_KEYS) slots[key] = { rules: [] }
-  return slots
+/** 渲染并展开（场景默认入口）。 */
+function page(groups, patch = {}, hooks = {}) {
+  resetProbe()
+  const { tree, api } = settingsTree(groups, patch, hooks)
+  return { rendered: renderPage(tree), api }
 }
+
+/** 找组卡片。 */
+const groupCards = (node) => byClass(node, 'dshpi-group-card')
+/** 找位置行（不带头/正文，用精确 class）。 */
+const positionRows = (node) => byClass(node, 'dshpi-position')
+/** 按位置名找一行。 */
+const rowOf = (node, pointKey) => positionRows(node).find((row) => stringsOf(row).includes(LABELS[pointKey]))
+/** 找一组里的 Button。 */
+const buttonsOf = (node) => findAll(node, (item) => item.type === 'Button')
+/** 按 aria-label 找按钮。 */
+const buttonByLabel = (node, label) => buttonsOf(node).find((item) => item.props?.['aria-label'] === label)
+/** 找一组里的 Switch。 */
+const switchesOf = (node) => findAll(node, (item) => item.type === 'Switch')
+/** 找一组里的 textarea。 */
+const textareasOf = (node) => findAll(node, (item) => item.type === 'textarea')
+
+// ---------- 零组：居中空状态，整块可点 ----------
+{
+  const { rendered, api } = page([])
+  const emptyStates = byClass(rendered, 'dshpi-empty-state')
+  check('零组渲染一块空状态', emptyStates.length === 1, String(emptyStates.length))
+  const emptyStrings = stringsOf(emptyStates[0] ?? null).join('|')
+  check('空状态文案「还没有注入规则」', emptyStrings.includes('还没有注入规则'), emptyStrings)
+  check('空状态文案「＋ 新建组」', emptyStrings.includes('＋ 新建组'), emptyStrings)
+  check('空状态整块可点（onClick）', typeof emptyStates[0]?.props?.onClick === 'function')
+  check('零组不渲染组卡片', groupCards(rendered).length === 0, String(groupCards(rendered).length))
+  check('零组不渲染底部新增按钮', byClass(rendered, 'dshpi-add-group').length === 0)
+  emptyStates[0]?.props?.onClick?.()
+  check('点空状态会新建组', api.calls.addGroup?.length === 1, JSON.stringify(api.calls.addGroup))
+  emptyStates[0]?.props?.onKeyDown?.({ key: 'Enter', preventDefault: () => {} })
+  check('空状态支持键盘打开（Enter）', api.calls.addGroup?.length === 2, JSON.stringify(api.calls.addGroup))
+}
+
+// ---------- 有组：组卡片 + 8 个位置行 ----------
+{
+  const group = makeGroup({ positions: { 'user.prefix': { enabled: true, text: '规则正文' } } })
+  const { rendered } = page([group])
+  const cards = groupCards(rendered)
+  check('有组时渲染组卡片', cards.length === 1, String(cards.length))
+  const card = cards[0]
+  const cardStrings = stringsOf(card).join('|')
+  check('组卡片带组名输入框', byClass(card, 'dshpi-group-name').length === 1, String(byClass(card, 'dshpi-group-name').length))
+  const nameInput = byClass(card, 'dshpi-group-name')[0]
+  check('组名输入框是受控的', nameInput?.props?.value === '工作', JSON.stringify(nameInput?.props?.value))
+  check('组卡片带顺序徽章', byClass(card, 'dshpi-order').length === 1)
+  check('组卡片有 8 个位置行', positionRows(card).length === 8, String(positionRows(card).length))
+  check('8 个位置行标题与注入点表对齐', POINT_KEYS.every((key) => rowOf(card, key) !== undefined), POINT_KEYS.filter((key) => rowOf(card, key) === undefined).join(','))
+  check('位置行分成头和正文两块', byClass(card, 'dshpi-position-head').length === 8 && byClass(card, 'dshpi-position-body').length === 1, `${byClass(card, 'dshpi-position-head').length}/${byClass(card, 'dshpi-position-body').length}`)
+  check('位置关着时不渲染 textarea', textareasOf(card).length === 1, String(textareasOf(card).length))
+  check('开着的位置渲染 textarea 且带正文', textareasOf(card)[0]?.props?.value === '规则正文', JSON.stringify(textareasOf(card)[0]?.props?.value))
+  check('开着的位置有 textarea 类名', hasClass(textareasOf(card)[0] ?? {}, 'dshpi-textarea'))
+  check('关着的位置标「已关闭」', stringsOf(card).filter((text) => text === '已关闭').length === 7, String(stringsOf(card).filter((text) => text === '已关闭').length))
+  // 替换 / 插进标签：system 的 6 个位置必须有（用户前后缀算不算由实现决定，不额外约束条数）。
+  const SYSTEM_KEYS = ['system.personaHead', 'system.beforeTools', 'system.afterTools', 'system.middle', 'system.personaTail', 'system.last']
+  check('system 的 6 个位置行都带替换 / 插进标签', SYSTEM_KEYS.every((key) => byClass(rowOf(card, key) ?? null, 'dshpi-kind').length === 1), JSON.stringify(SYSTEM_KEYS.filter((key) => byClass(rowOf(card, key) ?? null, 'dshpi-kind').length !== 1)))
+  const kindLabels = findAll(card, (item) => hasClass(item, 'dshpi-kind')).map((item) => stringsOf(item).join(''))
+  check('替换 / 插进标签文案正确', kindLabels.length >= 6 && kindLabels.every((label) => label === '替换' || label === '插进'), JSON.stringify(kindLabels))
+  check('用户前置词行展示 notice', (() => {
+    const row = rowOf(card, 'user.prefix')
+    return row !== undefined && stringsOf(row).join('|').includes('注入后不会自动清除')
+  })())
+  // notice 只在位置打开时出现（关着的一行只显示「已关闭」）。
+  const suffixRendered = renderPage(settingsTree([makeGroup({ positions: { 'user.prefix': { enabled: true, text: '规则正文' }, 'user.suffix': { enabled: true, text: '' } } })]).tree)
+  const suffixRow = rowOf(groupCards(suffixRendered)[0] ?? null, 'user.suffix')
+  check('关掉时用户后置词行不显示 notice', !stringsOf(rowOf(card, 'user.suffix') ?? null).join('|').includes('注入后不会自动清除'))
+  check('打开后用户后置词行展示 notice', stringsOf(suffixRow ?? null).join('|').includes('注入后不会自动清除'), stringsOf(suffixRow ?? null).join('|').slice(0, 80))
+}
+
+// ---------- 组开关 / 组名 / 位置开关都接到控制器 ----------
+{
+  const group = makeGroup({ positions: { 'user.prefix': { enabled: true, text: '正文' } } })
+  const { rendered, api } = page([group])
+  const card = groupCards(rendered)[0]
+  const head = byClass(card, 'dshpi-group-head')[0]
+  const groupSwitch = switchesOf(head)[0]
+  check('组头有启用开关', groupSwitch !== undefined)
+  groupSwitch?.props?.onChange?.(false)
+  check('点组开关调 editGroup(id, change)', api.calls.editGroup?.length === 1 && api.calls.editGroup[0][0] === 'g1' && typeof api.calls.editGroup[0][1] === 'function', JSON.stringify(api.calls.editGroup?.map((args) => [args[0], typeof args[1]])))
+  check('组开关的 change 函数把 enabled 改成 false', api.calls.editGroup?.[0]?.[1]?.({ ...group })?.enabled === false)
+
+  const nameInput = byClass(head, 'dshpi-group-name')[0]
+  nameInput?.props?.onChange?.({ target: { value: '新名字' } })
+  const renameCall = api.calls.editGroup?.at(-1)
+  check('改组名调 editGroup(id, change)', renameCall?.[0] === 'g1' && typeof renameCall?.[1] === 'function', JSON.stringify(api.calls.editGroup?.map((args) => [args[0], typeof args[1]])))
+  check('改组名的 change 函数更新 name', renameCall?.[1]?.({ ...group })?.name === '新名字', JSON.stringify(renameCall?.[1]?.({ ...group })?.name))
+
+  const prefixRow = rowOf(card, 'user.prefix')
+  const prefixSwitch = switchesOf(byClass(prefixRow, 'dshpi-position-head')[0] ?? prefixRow)[0]
+  prefixSwitch?.props?.onChange?.(false)
+  const positionCall = api.calls.editPosition?.[0]
+  check('点位置开关调 editPosition(groupId, pointKey, patch)', positionCall?.[0] === 'g1' && positionCall?.[1] === 'user.prefix' && positionCall?.[2]?.enabled === false, JSON.stringify(positionCall))
+
+  const textarea = textareasOf(prefixRow)[0]
+  textarea?.props?.onChange?.({ target: { value: '改过的正文' } })
+  const textCall = api.calls.editPosition?.at(-1)
+  check('改位置正文调 editPosition(groupId, pointKey, {text})', textCall?.[0] === 'g1' && textCall?.[1] === 'user.prefix' && textCall?.[2]?.text === '改过的正文', JSON.stringify(textCall))
+}
+
+// ---------- 组关闭 / 作用域胶囊 ----------
+{
+  const offPage = page([makeGroup({ enabled: false })]).rendered
+  check('组关闭时显示「已停用」标签', byClass(offPage, 'dshpi-off-tag').length === 1, String(byClass(offPage, 'dshpi-off-tag').length))
+  check('「已停用」文案在标签里', stringsOf(byClass(offPage, 'dshpi-off-tag')[0] ?? null).join('|').includes('已停用'), stringsOf(byClass(offPage, 'dshpi-off-tag')[0] ?? null).join('|'))
+
+  const cases = [
+    { name: '勾了「全部」', models: { all: true, list: [] }, expect: '全部' },
+    { name: '勾了 2 个模型', models: { all: false, list: [FLASH, PRO] }, expect: '已应用 2 个模型' },
+    { name: '勾了 1 个模型', models: { all: false, list: [FLASH] }, expect: '已应用 1 个模型' },
+    { name: '一个都没勾', models: { all: false, list: [] }, expect: '无应用' },
+  ]
+  for (const item of cases) {
+    const rendered = page([makeGroup({ models: item.models })]).rendered
+    const pill = byClass(rendered, 'dshpi-scope')[0]
+    const pillStrings = stringsOf(pill ?? null).join('|')
+    check(`${item.name}：胶囊显示「${item.expect}」`, pillStrings.includes(item.expect), pillStrings)
+  }
+
+  const invalidRendered = page([makeGroup({ models: { all: false, list: ['gone/model', FLASH] } })]).rendered
+  const invalidPill = stringsOf(byClass(invalidRendered, 'dshpi-scope')[0] ?? null).join('|')
+  check('混了失效模型：只数仍生效的，另标失效数', invalidPill.includes('已应用 1 个模型') && invalidPill.includes('已失效 1'), invalidPill)
+
+  const { rendered, api } = page([makeGroup()])
+  const pill = byClass(rendered, 'dshpi-scope')[0]
+  pill?.props?.onClick?.()
+  check('点作用域胶囊调 openGroupScope(groupId)', api.calls.openGroupScope?.length === 1 && api.calls.openGroupScope[0][0] === 'g1', JSON.stringify(api.calls.openGroupScope))
+}
+
+// ---------- 组顺序按钮与删除 ----------
+{
+  const groups = [
+    groupWithText('g1', '第一组', 'user.prefix', '一'),
+    groupWithText('g2', '第二组', 'user.prefix', '二'),
+    groupWithText('g3', '第三组', 'user.prefix', '三'),
+  ]
+  const { rendered, api } = page(groups)
+  const cards = groupCards(rendered)
+  check('三个组渲染成三张卡片', cards.length === 3, String(cards.length))
+  const nameOfCard = (card) => byClass(card, 'dshpi-group-name')[0]?.props?.value
+  check('组卡片按数组顺序排列', nameOfCard(cards[0]) === '第一组' && nameOfCard(cards[2]) === '第三组', JSON.stringify(cards.map(nameOfCard)))
+
+  const firstHead = byClass(cards[0], 'dshpi-group-head')[0]
+  check('第一个组的上移按钮禁用', buttonByLabel(firstHead, '上移这个组')?.props?.disabled === true)
+  check('第一个组的下移按钮可用', buttonByLabel(firstHead, '下移这个组')?.props?.disabled !== true)
+  const lastHead = byClass(cards[2], 'dshpi-group-head')[0]
+  check('最后一个组的下移按钮禁用', buttonByLabel(lastHead, '下移这个组')?.props?.disabled === true)
+  check('最后一个组的上移按钮可用', buttonByLabel(lastHead, '上移这个组')?.props?.disabled !== true)
+
+  buttonByLabel(firstHead, '下移这个组')?.props?.onClick?.()
+  check('点 ↓ 调 moveGroup(id, +1)', api.calls.moveGroup?.length === 1 && api.calls.moveGroup[0][0] === 'g1' && api.calls.moveGroup[0][1] === 1, JSON.stringify(api.calls.moveGroup))
+  buttonByLabel(cards[1] ? byClass(cards[1], 'dshpi-group-head')[0] : null, '上移这个组')?.props?.onClick?.()
+  check('点 ↑ 调 moveGroup(id, -1)', api.calls.moveGroup?.length === 2 && api.calls.moveGroup[1][0] === 'g2' && api.calls.moveGroup[1][1] === -1, JSON.stringify(api.calls.moveGroup))
+
+  buttonByLabel(firstHead, '删除这个组')?.props?.onClick?.()
+  check('点 ✕ 只请求删除确认（requestRemoveGroup）', api.calls.requestRemoveGroup?.length === 1 && api.calls.requestRemoveGroup[0][0] === 'g1' && api.calls.confirmRemoveGroup === undefined, JSON.stringify(api.calls))
+}
+
+// ---------- 删除二次确认 Modal ----------
+{
+  const group = makeGroup({ id: 'g1', name: '工作' })
+  const { rendered, api } = page([group])
+  check('没有挂起删除时不渲染确认框', findAll(rendered, (item) => item.type === 'Modal').length === 0)
+
+  const pending = page([group], { pendingRemoveGroupId: 'g1' })
+  const modal = findAll(pending.rendered, (item) => item.type === 'Modal')[0]
+  check('pendingRemoveGroupId 存在时渲染确认 Modal', modal !== undefined)
+  check('确认框标题「删除组」', modal?.props?.title === '删除组', String(modal?.props?.title))
+  check('确认框 open', modal?.props?.open === true)
+  check('关闭标签是「取消」', modal?.props?.closeLabel === '取消', String(modal?.props?.closeLabel))
+  check('确认框说明里带组名', stringsOf(modal?.props?.description ?? []).join('|').includes('工作') || stringsOf(modal?.props?.children ?? []).join('|').includes('工作'), JSON.stringify(modal?.props?.description))
+
+  const footer = render(modal?.props?.footer)
+  const footerButtons = findAll(footer, (item) => item.type === 'Button')
+  const labels = footerButtons.map((item) => stringsOf(item).join(''))
+  check('确认框有两个按钮：取消 / 删除', footerButtons.length === 2 && labels.includes('取消') && labels.includes('删除'), JSON.stringify(labels))
+  const cancelButton = footerButtons.find((item) => stringsOf(item).join('') === '取消')
+  const deleteButton = footerButtons.find((item) => stringsOf(item).join('') === '删除')
+  cancelButton?.props?.onClick?.()
+  check('点「取消」调 cancelRemoveGroup', pending.api.calls.cancelRemoveGroup?.length === 1 && pending.api.calls.confirmRemoveGroup === undefined, JSON.stringify(pending.api.calls))
+  deleteButton?.props?.onClick?.()
+  check('点「删除」调 confirmRemoveGroup', pending.api.calls.confirmRemoveGroup?.length === 1, JSON.stringify(pending.api.calls))
+}
+
+// ---------- 组名清空后保存恢复：视图只负责把空名交上去，恢复在控制器 ----------
+{
+  const { rendered, api } = page([makeGroup({ name: '' })])
+  const input = byClass(rendered, 'dshpi-group-name')[0]
+  check('空组名可以正常显示（不崩）', input?.props?.value === '', JSON.stringify(input?.props?.value))
+  check('空组名的输入框有占位提示', typeof input?.props?.placeholder === 'string' && input.props.placeholder !== '')
+  check('对空组名输入时不炸', (() => {
+    try {
+      input?.props?.onChange?.({ target: { value: '临' } })
+      return true
+    } catch {
+      return false
+    }
+  })(), JSON.stringify(api.calls.editGroup?.length))
+}
+
+// ---------- 底部新增按钮 ----------
+{
+  const { rendered, api } = page([makeGroup()])
+  const addButtons = byClass(rendered, 'dshpi-add-group')
+  check('有组时渲染底部新增按钮', addButtons.length === 1, String(addButtons.length))
+  check('新增按钮文案「＋ 新增组」', stringsOf(addButtons[0] ?? null).join('') === '＋ 新增组', stringsOf(addButtons[0] ?? null).join(''))
+  addButtons[0]?.props?.onClick?.()
+  check('点新增按钮调 addGroup()', api.calls.addGroup?.length === 1 && api.calls.addGroup[0].length === 0, JSON.stringify(api.calls.addGroup))
+}
+
+// ---------- 拼错模板字段的轻提示 ----------
+{
+  const bad = page([groupWithText('g1', 'g', 'user.prefix', '看 {{modle}} 和 {{中文}}')]).rendered
+  const warn = byClass(bad, 'dshpi-card-warn')
+  const warnStrings = stringsOf(warn[0] ?? null).join('|')
+  check('拼错的小写字段给提示', warn.length === 1 && warnStrings.includes('{{modle}}') && warnStrings.includes('不是可用的模板字段'), warnStrings)
+  check('写中文的 {{}} 当字面文本，不给提示', !warnStrings.includes('{{中文}}'), warnStrings)
+
+  const good = page([groupWithText('g1', 'g', 'user.prefix', '模型 {{model}}，目录 {{cwd}}')]).rendered
+  check('用对字段时没有提示', byClass(good, 'dshpi-card-warn').length === 0)
+}
+
+// ---------- 顶栏 sticky ----------
+{
+  const barCss = source.match(/\.dshpi-bar\{[^}]*\}/)?.[0] ?? ''
+  check('顶栏样式是悬浮的（position:sticky）', barCss.includes('position:sticky'), barCss)
+}
+
+// ---------- 模板字段下拉：开合、不抢焦点、插入回退链 ----------
+const triggerOf = (node) => byClass(node, 'dshpi-fieldmenu-trigger')
+const popOf = (node) => byClass(node, 'dshpi-fieldmenu-pop')
+const itemsOf = (node) => byClass(node, 'dshpi-fieldmenu-item')
+/** 点某一项（按字段名）。 */
+const itemOf = (node, name) => itemsOf(node).find((item) => item.props?.['aria-label'] === `插入模板字段 ${name}`)
 
 /**
- * 造一份「用户前置词里有若干规则」的 slots。
- * @param {Array<object>} rules - 规则列表。
- * @returns {object} slots。
+ * 打开顶栏字段菜单，返回展开后的树和记录器。
+ * 开合状态存在 stateSlots 里跨渲染保留，所以点一下再渲染一次就能看到面板。
+ * @param {Array<object>} groups - 组列表。
+ * @param {object} [patch] - 额外状态。
+ * @param {object} [hooks] - 额外的 props 替身。
+ * @returns {{ rendered: object, api: object }} 展开后的树与调用记录。
  */
-function slotsWithRules(rules) {
-  const slots = baseSlots()
-  slots['user.prefix'] = { rules }
-  return slots
+function openMenu(groups, patch = {}, hooks = {}) {
+  const before = settingsTree(groups, patch, hooks)
+  triggerOf(renderPage(before.tree))[0]?.props?.onClick?.()
+  const opened = settingsTree(groups, patch, hooks)
+  return { rendered: renderPage(opened.tree), api: opened.api }
 }
 
-/** 造一条规则。 */
-const rule = (id, text, models) => ({ id, enabled: true, text, models })
+{
+  const groups = [groupWithText('g1', '工作', 'user.prefix', '前缀')]
+  resetProbe()
+  const first = renderPage(settingsTree(groups).tree)
+  const trigger = triggerOf(first)[0]
+  check('顶栏左侧有「模板字段」下拉触发钮', trigger !== undefined && trigger.type === 'button', String(trigger?.type))
+  check('触发钮默认收起', trigger?.props?.['aria-expanded'] === 'false', String(trigger?.props?.['aria-expanded']))
+  check('菜单默认关闭（不渲染面板）', popOf(first).length === 0)
 
-// ---------- 四种模型作用域状态 ----------
-const cases = [
-  { name: '勾了「全部」', models: { all: true, list: ['deepseek-account/deepseek-v4-pro'] }, expect: '全部' },
-  { name: '勾了 3 个模型', models: { all: false, list: ['deepseek-account/deepseek-flash', 'deepseek-account/deepseek-v4-pro', 'deepseek-account/deepseek-v4-lite'] }, expect: '已应用 3 个模型' },
-  { name: '勾了 1 个模型', models: { all: false, list: ['deepseek-account/deepseek-flash'] }, expect: '已应用 1 个模型' },
-  { name: '一个都没勾', models: { all: false, list: [] }, expect: '无应用' },
-]
-for (const item of cases) {
-  const cardNode = cardsOf(render(settingsTree(slotsWithRules([rule('r1', '规则正文', item.models)]))))[0]
-  const strings = stringsOf(cardNode)
-  const joined = strings.join('|')
-  check(`${item.name}：卡片只显示「${item.expect}」`, strings.includes(item.expect), joined)
-  check(`${item.name}：卡片里不出现任何模型键`, !strings.some((text) => text.includes('deepseek-account/')), joined)
-  check(`${item.name}：卡片里不显示规则文本摘要`, !strings.includes('规则正文'), joined)
-}
-
-// ---------- 失效模型 ----------
-const invalidCard = cardsOf(render(settingsTree(slotsWithRules([rule('r1', 'x', { all: false, list: ['gone/model', 'deepseek-account/deepseek-flash'] })]))))[0]
-const invalidStrings = stringsOf(invalidCard).join('|')
-check(
-  '混了失效模型：结论只数仍生效的，另标失效数',
-  invalidStrings.includes('已应用 1 个模型') && invalidStrings.includes('已失效 1'),
-  invalidStrings,
-)
-
-// ---------- 头部结构 ----------
-const cardTree = render(settingsTree(slotsWithRules([rule('r1', 'x', { all: false, list: ['deepseek-account/deepseek-v4-pro', 'deepseek-account/deepseek-v4-lite'] })])))
-const classNames = classNamesOf(cardTree)
-check('卡片里没有标题节点（dshpi-card-title）', !classNames.some((name) => name.includes('dshpi-card-title')), classNames.join(','))
-check('没有竖排移动条（dshpi-move）', !classNames.some((name) => name.includes('dshpi-move')), classNames.join(','))
-check(
-  '卡片头与按钮组都在',
-  classNames.some((name) => name.includes('dshpi-card-head')) && classNames.some((name) => name.includes('dshpi-card-actions')),
-)
-check('8 个注入点都渲染出来了', classNames.filter((name) => name === 'dshpi-disclosure').length === POINT_KEYS.length, String(classNames.filter((name) => name === 'dshpi-disclosure').length))
-
-const cardNode = cardsOf(cardTree)[0]
-const buttons = findAll(cardNode, (node) => node.type === 'Button')
-const buttonLabels = buttons.map((node) => node.props['aria-label'])
-check(
-  '右侧动作都在：上移 / 下移 / 复制 / 删除',
-  ['上移这条规则', '下移这条规则', '复制这条规则', '删除这条规则'].every((label) => buttonLabels.includes(label)),
-  buttonLabels.join(','),
-)
-check(
-  '上下按钮落在同一个右侧按钮组里',
-  findAll(cardNode, (node) => typeof node.props?.className === 'string' && node.props.className.includes('dshpi-card-actions')).some(
-    (group) => findAll(group, (node) => node.type === 'Button').length >= 3,
-  ),
-)
-check(
-  '上下按钮用图标而不是文字箭头',
-  buttons.every((node) => {
-    const icon = node.props.icon
-    const iconName = icon?.type?.displayName ?? icon?.type?.name ?? icon?.type
-    return typeof iconName === 'string' && iconName.startsWith('Icon')
-  }),
-  buttons.map((node) => String(node.props.icon?.type?.displayName ?? node.props.icon?.type)).join(','),
-)
-check(
-  '唯一一条规则时上移与下移都禁用',
-  buttons[0].props.disabled === true && buttons[1].props.disabled === true,
-  JSON.stringify({ up: buttons[0].props.disabled, down: buttons[1].props.disabled }),
-)
-
-const scopeNode = findAll(cardNode, (node) => typeof node.props?.className === 'string' && node.props.className.includes('dshpi-scope'))[0]
-check('模型结论是一枚 button（不再是只读标签）', scopeNode?.type === 'button' && typeof scopeNode?.props?.onClick === 'function', String(scopeNode?.type))
-check(
-  '模型结论 button 带无障碍名称与提示',
-  String(scopeNode?.props?.['aria-label']).includes('模型作用域') && scopeNode?.props?.title === '点击配置模型作用域',
-  JSON.stringify({ aria: scopeNode?.props?.['aria-label'], title: scopeNode?.props?.title }),
-)
-check('卡片里不再有只读的 Tag 标签', findAll(cardNode, (node) => node.type === 'Tag').length === 0)
-
-// ---------- 顶部栏：只报保存状态（不再报「当前解析到的模型」） ----------
-const barTree = render(settingsTree(slotsWithRules([rule('r1', 'x', { all: true, list: [] })])))
-const barNode = findAll(barTree, (node) => typeof node.props?.className === 'string' && node.props.className === 'dshpi-bar')[0]
-const barStrings = stringsOf(barNode).join('|')
-check('顶部报保存状态', barStrings.includes('已保存'), barStrings)
-check('顶部不再报「当前解析到的模型」', !barStrings.includes('当前解析到') && !barStrings.includes('deepseek-account/'), barStrings)
-const barClasses = classNamesOf(barNode).join('|')
-check('顶部没有说明文案节点（dshpi-bar-label 已删）', !barClasses.includes('dshpi-bar-label'), barClasses)
-
-// ---------- 模型弹层：目录没拉全时给一句说明；不再挂「当前」标签 ----------
-/** 渲染「模型作用域弹层开着」的页面，patch 可覆盖状态。 */
-const modalTree = (patch) =>
-  render(
-    settingsTree(slotsWithRules([rule('r1', 'x', { all: true, list: [] })]), {
-      openModelRule: { pointKey: 'user.prefix', ruleId: 'r1' },
-      ...patch,
-    }),
-  )
-const noteOf = (tree) => findAll(tree, (node) => typeof node.props?.className === 'string' && node.props.className === 'dshpi-model-note')
-const degradedTree = modalTree({ catalog: { ...CATALOG, degraded: true } })
-const notes = noteOf(degradedTree)
-check(
-  '目录没拉全时弹层里说明「已失效」是怎么来的',
-  notes.length === 1 && stringsOf(notes[0]).join('').includes('模型目录拉取失败'),
-  JSON.stringify(stringsOf(notes[0])),
-)
-check('目录拉全时没有这句提示', noteOf(modalTree({})).length === 0)
-check(
-  '弹层里不再有「当前」标签',
-  !classNamesOf(degradedTree).join('|').includes('dshpi-current') && findAll(degradedTree, (node) => node.props?.children === '当前').length === 0,
-)
-
-// ---------- 点模型结论会开弹层 ----------
-const openCalls = []
-const scopeTree = settingsTree(slotsWithRules([rule('r1', 'x', { all: true, list: [] })]), {}, {
-  openModelRule: (pointKey, ruleId) => openCalls.push({ pointKey, ruleId }),
-})
-const scopeButton = findAll(render(scopeTree), (node) => typeof node.props?.className === 'string' && node.props.className.includes('dshpi-scope'))[0]
-scopeButton?.props?.onClick?.()
-check('点模型结论按钮会打开该规则的模型作用域弹层', openCalls.length === 1 && openCalls[0].pointKey === 'user.prefix' && openCalls[0].ruleId === 'r1', JSON.stringify(openCalls))
-
-// ---------- 删除 → 撤销 ----------
-const twoRules = slotsWithRules([rule('r1', '第一条', { all: true, list: [] }), rule('r2', '第二条', { all: true, list: [] })])
-const removed = []
-// 有规则时默认展开，不需要显式 panels。
-const deleteTree = settingsTree(twoRules, {}, {
-  removeRule: (pointKey, removedRule, at) => removed.push({ pointKey, removedRule, at }),
-})
-const removeButtons = findAll(render(deleteTree), (node) => node.props?.['aria-label'] === '删除这条规则')
-check('两条规则各有一枚删除按钮', removeButtons.length === 2, String(removeButtons.length))
-removeButtons[1]?.props?.onClick?.()
-check(
-  '点删除会带着「规则内容 + 原位置」交给撤销入口',
-  removed.length === 1 && removed[0].pointKey === 'user.prefix' && removed[0].removedRule.id === 'r2' && removed[0].at === 1,
-  JSON.stringify(removed.map((item) => ({ pointKey: item.pointKey, id: item.removedRule.id, at: item.at }))),
-)
-
-const toastTree = settingsTree(baseSlots(), { toast: { text: '已删除 1 条规则', undo: () => {} } })
-render(toastTree)
-const toastProps = primitives.lastToastProps
-const toastActions = toastProps?.actions
-check('删除后官方 Toast 拿到提示文案', toastProps?.text === '已删除 1 条规则', String(toastProps?.text))
-check(
-  '提示里带一个「撤销」动作',
-  Array.isArray(toastActions) && toastActions.length === 1 && toastActions[0].label === '撤销' && typeof toastActions[0].onClick === 'function',
-  JSON.stringify(toastActions?.map((action) => ({ prefix: action.prefix, label: action.label, clickable: typeof action.onClick === 'function' }))),
-)
-
-primitives.lastToastProps = undefined
-render(settingsTree(baseSlots()))
-check('没有提示时不会渲染提示条', primitives.lastToastProps === undefined)
-
-// ---------- 折叠 ----------
-const withRules = slotsWithRules([rule('r1', '一条', { all: true, list: [] })])
-const toggles = []
-const toggleTree = settingsTree(withRules, {}, { togglePanel: (pointKey, currentOpen) => toggles.push({ pointKey, currentOpen }) })
-const heads = findAll(render(toggleTree), (node) => node.props?.className === 'dshpi-disclosure-head')
-check('8 个注入点都有折叠头', heads.length === 8, String(heads.length))
-check('有规则的注入点默认展开', heads.find((node) => node.props['aria-expanded'] === 'true') !== undefined)
-const collapsible = heads.filter((node) => node.props['aria-expanded'] === 'true')[0]
-collapsible?.props?.onClick?.()
-check(
-  '点折叠头只把注入点键交给控制器（不再传「当前是否展开」）',
-  toggles.length === 1 && toggles[0].pointKey === 'user.prefix' && toggles[0].currentOpen === undefined,
-  JSON.stringify(toggles),
-)
-const closedTree = settingsTree(withRules, { panels: { 'user.prefix': false } })
-const closedCards = findAll(render(closedTree), (node) => typeof node.props?.className === 'string' && node.props.className === 'dshpi-card')
-check('显式收起后卡片不再渲染', closedCards.length === 0, String(closedCards.length))
-const reopened = findAll(render(settingsTree(withRules, { panels: { 'user.prefix': true } })), (node) => typeof node.props?.className === 'string' && node.props.className === 'dshpi-card')
-check('显式展开后卡片回来', reopened.length === 1, String(reopened.length))
-
-// ---------- 分组与顺序：system 按在 system 里出现的先后排 ----------
-const groupTitles = findAll(render(settingsTree(baseSlots())), (node) => typeof node.props?.className === 'string' && node.props.className.includes('dshpi-group-title')).map((node) => node.props.children)
-check('页面分成「用户消息」与「system 段」两组', groupTitles.length === 2 && groupTitles[0] === '用户消息' && String(groupTitles[1]).startsWith('system 段'), JSON.stringify(groupTitles))
-
-const sectionTitles = findAll(render(settingsTree(baseSlots())), (node) => typeof node.props?.className === 'string' && node.props.className === 'dshpi-section-title').map((node) => node.props.children)
-const systemOrder = sectionTitles.filter((title) => title.startsWith('system') || ['工具说明之前', '工具说明之后', '结构化输出之前'].includes(title))
-check(
-  'system 小节顺序 = head → 工具之前 → 工具之后 → 结构化输出之前 → 尾 → 末尾',
-  JSON.stringify(systemOrder) === JSON.stringify(['system 头部', '工具说明之前', '工具说明之后', '结构化输出之前', 'system 尾部', 'system 最末尾']),
-  JSON.stringify(systemOrder),
-)
-check('头与尾不再挨着', systemOrder.indexOf('system 头部') === 0 && systemOrder.indexOf('system 尾部') === 4)
-
-const kindPills = findAll(render(settingsTree(baseSlots())), (node) => typeof node.props?.className === 'string' && node.props.className === 'dshpi-kind').map((node) => node.props.children)
-check('每个 system 小节标明「替换」还是「插进」', JSON.stringify(kindPills) === JSON.stringify(['替换', '插进', '插进', '插进', '替换', '插进']), JSON.stringify(kindPills))
-
-// ---------- 空规则时的引导 ----------
-const emptyStrings = stringsOf(render(settingsTree(baseSlots(), { panels: { 'user.prefix': true } }))).join('|')
-check('展开空注入点时给一句引导', emptyStrings.includes('还没有规则'), emptyStrings.slice(0, 160))
-const collapsed = stringsOf(render(settingsTree(baseSlots()))).join('|')
-check('默认收起时空注入点标「还没有规则」', collapsed.includes('还没有规则'))
-
-// ---------- 顶栏模板字段下拉菜单 ----------
-// 顶栏悬浮：样式源码里 dshpi-bar 是 sticky（保持在流内第一位，内容区块天然避让它）。
-const barCss = source.match(/\.dshpi-bar\{[^}]*\}/)?.[0] ?? ''
-check('顶栏样式是悬浮的（position:sticky）', barCss.includes('position:sticky'), barCss)
-
-resetMenuProbe()
-const menuTree = renderPage(settingsTree(menuSlots()))
-const trigger = triggerOf(menuTree)[0]
-check('顶栏左侧有「模板字段」下拉触发钮', trigger !== undefined && trigger.type === 'button')
-check(
-  '触发钮带 aria 状态与插入说明，默认收起',
-  trigger?.props?.['aria-haspopup'] === 'true' && trigger?.props?.['aria-expanded'] === 'false' && String(trigger?.props?.title).includes('光标'),
-  JSON.stringify({ haspopup: trigger?.props?.['aria-haspopup'], expanded: trigger?.props?.['aria-expanded'] }),
-)
-check('菜单默认关闭（不渲染面板）', popOf(menuTree).length === 0)
-
-// 打开：点触发钮 → 面板列出全部字段（徽章 + 标签 + 注释）+ 底部行为提示。
-trigger?.props?.onClick?.()
-const openTree = renderPage(settingsTree(menuSlots()))
-const openTrigger = triggerOf(openTree)[0]
-check('点触发钮后面板打开（aria-expanded 翻真）', openTrigger?.props?.['aria-expanded'] === 'true')
-const pops = popOf(openTree)
-const items = itemsOf(openTree)
-check('面板列出全部模板字段', items.length === TEMPLATE_FIELDS.length, items.map((item) => item.props?.['aria-label']).join(' | '))
-check(
-  '每项带 {{字段}} 徽章、标签与注释',
-  pops.length === 1 &&
+  trigger?.props?.onClick?.()
+  const openTree = renderPage(settingsTree(groups).tree)
+  const openTrigger = triggerOf(openTree)[0]
+  check('点触发钮后面板打开', openTrigger?.props?.['aria-expanded'] === 'true')
+  const items = itemsOf(openTree)
+  check('面板列出全部模板字段', items.length === TEMPLATE_FIELDS.length, String(items.length))
+  check(
+    '每项带 {{字段}} 徽章、标签与注释',
     TEMPLATE_FIELDS.every((field) => {
-      const item = items.find((node) => node.props?.['aria-label'] === `插入模板字段 ${field.name}`)
+      const item = itemOf(openTree, field.name)
       if (item === undefined) return false
       const text = stringsOf(item).join('|')
       return text.includes(`{{${field.name}}}`) && text.includes(field.label) && text.includes(field.note)
     }),
-  stringsOf(pops[0]).slice(0, 200).join('|'),
-)
-check('面板底部给插入行为提示', stringsOf(pops[0]).join('|').includes('光标处'))
+  )
 
-// 不抢焦点：触发钮与每个菜单项都在 mousedown 上 preventDefault。
-let triggerPrevented = false
-openTrigger?.props?.onMouseDown?.({ preventDefault: () => { triggerPrevented = true } })
-check(
-  '触发钮与菜单项都拦 mousedown（打开/点选不抢输入框焦点）',
-  triggerPrevented === true &&
-    items.every((item) => {
-      if (typeof item.props?.onMouseDown !== 'function') return false
-      let prevented = false
-      item.props.onMouseDown({ preventDefault: () => { prevented = true } })
-      return prevented
-    }),
-)
-check('打开时挂了 document 的 mousedown / keydown 监听', docListeners.has('mousedown') && docListeners.has('keydown'), JSON.stringify([...docListeners.keys()]))
+  let triggerPrevented = false
+  openTrigger?.props?.onMouseDown?.({ preventDefault: () => { triggerPrevented = true } })
+  check(
+    '触发钮与菜单项都拦 mousedown（不抢输入框焦点）',
+    triggerPrevented === true &&
+      items.every((item) => {
+        if (typeof item.props?.onMouseDown !== 'function') return false
+        let prevented = false
+        item.props.onMouseDown({ preventDefault: () => { prevented = true } })
+        return prevented
+      }),
+  )
+  check('打开时挂了 document 的 mousedown / keydown 监听', docListeners.has('mousedown') && docListeners.has('keydown'))
 
-// Escape 收菜单。
-for (const listener of docListeners.get('keydown') ?? []) listener({ key: 'Escape' })
-check('按 Escape 后面板收起来', popOf(renderPage(settingsTree(menuSlots()))).length === 0)
+  for (const listener of docListeners.get('keydown') ?? []) listener({ key: 'Escape' })
+  check('按 Escape 后面板收起来', popOf(renderPage(settingsTree(groups).tree)).length === 0)
 
-// 点面板外面（mousedown）也收。
-triggerOf(renderPage(settingsTree(menuSlots())))[0]?.props?.onClick?.()
-renderPage(settingsTree(menuSlots()))
-for (const listener of docListeners.get('mousedown') ?? []) listener({ target: {} })
-check('点面板外面（mousedown）面板收起来', popOf(renderPage(settingsTree(menuSlots()))).length === 0)
+  triggerOf(renderPage(settingsTree(groups).tree))[0]?.props?.onClick?.()
+  renderPage(settingsTree(groups).tree)
+  for (const listener of docListeners.get('mousedown') ?? []) listener({ target: {} })
+  check('点面板外面（mousedown）面板收起来', popOf(renderPage(settingsTree(groups).tree)).length === 0)
+}
 
-// 点 {{model}} 项：无 DOM 可走「第一个有规则的注入点的末条」兜底 → 追加到文本末尾。
-resetMenuProbe()
-const chipEdits = []
-const clickHooks = { editRules: (pointKey, change) => chipEdits.push({ pointKey, rules: change([rule('r1', '前缀', { all: true, list: [] })]) }) }
-triggerOf(renderPage(settingsTree(menuSlots(), {}, clickHooks)))[0]?.props?.onClick?.()
-itemsOf(renderPage(settingsTree(menuSlots(), {}, clickHooks)))[0]?.props?.onClick?.()
-check(
-  '点 {{model}} 项把字段插进规则文本',
-  chipEdits.length === 1 && chipEdits[0].pointKey === 'user.prefix' && chipEdits[0].rules[0].text === '前缀{{model}}',
-  JSON.stringify(chipEdits.map((edit) => edit.rules[0].text)),
-)
+// 焦点在某个位置输入框里：插到那个位置（无真实光标信息时追加到末尾）。
+{
+  const groups = [
+    makeGroup({ id: 'g1', name: '一', positions: { 'user.prefix': { enabled: true, text: 'A' }, 'user.suffix': { enabled: true, text: 'B' } } }),
+    groupWithText('g2', '二', 'user.prefix', 'C'),
+  ]
+  resetProbe()
+  const opened = openMenu(groups)
+  const prefixRow = rowOf(opened.rendered, 'user.prefix')
+  const focusedArea = textareasOf(prefixRow)[0]
+  focusedArea?.props?.onFocus?.({ target: focusedArea.__element })
+  document.activeElement = focusedArea?.__element
+  itemOf(opened.rendered, 'model')?.props?.onClick?.()
+  const call = opened.api.calls.editPosition?.[0]
+  check('焦点在输入框时插到那个位置', call?.[0] === 'g1' && call?.[1] === 'user.prefix' && call?.[2]?.text === 'A{{model}}', JSON.stringify(call))
+}
 
-// 一条规则都没有时点字段：直接新建一条，内容就是那个字段。
-resetMenuProbe()
-const chipEditsEmpty = []
-const emptyHooks = { editRules: (pointKey, change) => chipEditsEmpty.push({ pointKey, rules: change([]) }) }
-triggerOf(renderPage(settingsTree(baseSlots(), { panels: { 'user.prefix': true } }, emptyHooks)))[0]?.props?.onClick?.()
-itemsOf(renderPage(settingsTree(baseSlots(), { panels: { 'user.prefix': true } }, emptyHooks)))[2]?.props?.onClick?.()
-check(
-  '没有规则时点 {{cwd}} 项会新建一条规则',
-  chipEditsEmpty.length === 1 && chipEditsEmpty[0].pointKey === 'user.prefix' && chipEditsEmpty[0].rules.length === 1 && chipEditsEmpty[0].rules[0].text === '{{cwd}}',
-  JSON.stringify(chipEditsEmpty.map((edit) => edit.rules.map((item) => item.text))),
-)
+// 没试过输入框：插到「第一个有非空位置的组的最后一个这类位置」。
+{
+  const groups = [
+    makeGroup({ id: 'g1', name: '一', positions: { 'user.prefix': { enabled: true, text: 'A' }, 'user.suffix': { enabled: true, text: 'B' } } }),
+    groupWithText('g2', '二', 'user.prefix', 'C'),
+  ]
+  resetProbe()
+  const opened = openMenu(groups)
+  itemOf(opened.rendered, 'model')?.props?.onClick?.()
+  const call = opened.api.calls.editPosition?.[0]
+  check('没有焦点时插到第一个有内容组的最后一个非空位置', call?.[0] === 'g1' && call?.[1] === 'user.suffix' && call?.[2]?.text === 'B{{model}}', JSON.stringify(call))
+}
 
-// 老 host 不下发字段表时：没有触发钮，页面照常。
-resetMenuProbe()
-const noFields = renderPage(settingsTree(menuSlots(), { fields: [] }))
-check('host 没给字段表时不渲染下拉（版本错位也不炸）', triggerOf(noFields).length === 0)
+// 所有位置都空：落到第一组的 user.prefix，并自动打开它。
+{
+  const groups = [makeGroup({ id: 'g1', name: '一', positions: { 'user.prefix': { enabled: false, text: '' } } })]
+  resetProbe()
+  const opened = openMenu(groups)
+  itemOf(opened.rendered, 'model')?.props?.onClick?.()
+  const call = opened.api.calls.editPosition?.[0]
+  check('全空时落到第一组 user.prefix 并自动打开', call?.[0] === 'g1' && call?.[1] === 'user.prefix' && call?.[2]?.enabled === true && String(call?.[2]?.text).includes('{{model}}'), JSON.stringify(call))
+}
 
-// 每节上置提示条已删：整棵树里不再有字段徽章条。
-const goneClasses = classNamesOf(renderPage(settingsTree(menuSlots()))).join('|')
-check('各注入点里的上置字段提示条已删除', !goneClasses.includes('dshpi-fields') && !goneClasses.includes('dshpi-field-chip'), goneClasses.slice(0, 200))
-resetMenuProbe()
+// 零组：一次 addGroup(token) 建好组并填进 user.prefix。
+{
+  resetProbe()
+  const opened = openMenu([])
+  itemOf(opened.rendered, 'model')?.props?.onClick?.()
+  check('零组时点字段先建组，并把字段一起交出去', opened.api.calls.addGroup?.length === 1 && opened.api.calls.addGroup[0][0] === '{{model}}', JSON.stringify(opened.api.calls.addGroup))
+  check('零组建组后不再额外调 editPosition', opened.api.calls.editPosition === undefined)
+}
 
-// ---------- 未知字段的轻提示 ----------
-const unknownCard = cardsOf(render(settingsTree(slotsWithRules([rule('r1', '看 {{modle}} 和 {{中文}}', { all: true, list: [] })]))))[0]
-const unknownStrings = stringsOf(unknownCard).join('|')
-check(
-  '拼错的小写字段会在卡片里提示',
-  unknownStrings.includes('{{modle}}') && unknownStrings.includes('不是可用的模板字段'),
-  unknownStrings,
-)
-check('写中文的 {{}} 当字面文本，不给提示', !unknownStrings.includes('{{中文}}'), unknownStrings)
-const knownCard = cardsOf(render(settingsTree(slotsWithRules([rule('r1', '模型 {{model}}，目录 {{cwd}}', { all: true, list: [] })]))))[0]
-check('用对字段时卡片里没有提示', !stringsOf(knownCard).join('|').includes('不是可用的模板字段'))
+// 老 host 不下发字段表：没有触发钮，页面照常。
+{
+  resetProbe()
+  const tree = renderPage(settingsTree([makeGroup()], { fields: [] }).tree)
+  check('host 没给字段表时不渲染下拉（版本错位也不炸）', triggerOf(tree).length === 0)
+}
+
+// ---------- Toast ----------
+{
+  resetProbe()
+  const { tree } = settingsTree([makeGroup()], { toast: { text: '已删除组「工作」' } })
+  renderPage(tree)
+  check('有提示时官方 Toast 拿到文案', primitives.lastToastProps?.text === '已删除组「工作」', String(primitives.lastToastProps?.text))
+  check('删除提示没有「撤销」（分组版不带撤销）', primitives.lastToastProps?.actions === undefined || primitives.lastToastProps?.actions?.length === 0, JSON.stringify(primitives.lastToastProps?.actions))
+}
+
+{
+  resetProbe()
+  renderPage(settingsTree([makeGroup()]).tree)
+  check('没有提示时不会渲染提示条', primitives.lastToastProps === undefined)
+}
+
+// ---------- 作用域弹层 ----------
+{
+  resetProbe()
+  const group = makeGroup({ models: { all: false, list: [FLASH] } })
+  const opened = renderPage(settingsTree([group], { openGroupScope: 'g1' }).tree)
+  const modal = findAll(opened, (item) => item.type === 'Modal')[0]
+  check('openGroupScope 存在时渲染作用域弹层', modal !== undefined)
+  check('作用域弹层标题', modal?.props?.title === '模型作用域', String(modal?.props?.title))
+  const modalStrings = stringsOf(modal?.props?.children ?? []).join('|')
+  check('作用域弹层列出目录里的模型键', CATALOG.providers[0].models.every((model) => modalStrings.includes(`${CATALOG.providers[0].id}/${model.id}`)), modalStrings.slice(0, 120))
+
+  resetProbe()
+  const degraded = renderPage(settingsTree([group], { openGroupScope: 'g1', catalog: { ...CATALOG, degraded: true } }).tree)
+  const degradedModal = findAll(degraded, (item) => item.type === 'Modal')[0]
+  check('目录没拉全时弹层里给一句说明', stringsOf(degradedModal?.props?.children ?? []).join('|').includes('模型目录拉取失败'), stringsOf(degradedModal?.props?.children ?? []).join('|').slice(0, 160))
+
+  // 沿用旧版行为：勾选立即写回组作用域，「完成」/关闭只关弹层。
+  resetProbe()
+  const liveGroup = makeGroup({ models: { all: false, list: [] } })
+  const live = settingsTree([liveGroup], { openGroupScope: 'g1' })
+  const boxesOfModal = (modal) => findAll(modal?.props?.children ?? [], (item) => item.type === 'Checkbox')
+  const footerButtonsOf = (modal) => findAll(render(modal?.props?.footer), (item) => item.type === 'Button')
+  const liveView = renderPage(live.tree)
+  const liveModal = findAll(liveView, (item) => item.type === 'Modal')[0]
+  boxesOfModal(liveModal).find((box) => box.props?.label === 'deepseek-flash')?.props?.onChange?.()
+  const modelCall = live.api.calls.editGroup?.[0]
+  const modelPatch = modelCall?.[1]?.({ ...liveGroup })
+  check('点某个模型会立即写回组作用域', modelCall?.[0] === 'g1' && JSON.stringify(modelPatch?.models) === JSON.stringify({ all: false, list: [FLASH] }), JSON.stringify(modelPatch?.models))
+  boxesOfModal(liveModal)[0]?.props?.onChange?.(true)
+  const allCall = live.api.calls.editGroup?.[1]
+  const allPatch = allCall?.[1]?.({ ...liveGroup })
+  check('点「全部模型」会写完 all 并保留勾选列表', allCall?.[0] === 'g1' && allPatch?.models?.all === true && Array.isArray(allPatch?.models?.list), JSON.stringify(allPatch?.models))
+  footerButtonsOf(liveModal).find((button) => stringsOf(button).join('') === '完成')?.props?.onClick?.()
+  check('点「完成」关掉弹层', live.api.calls.openGroupScope?.at(-1)?.[0] === undefined, JSON.stringify(live.api.calls.openGroupScope))
+  const closingsBefore = live.api.calls.openGroupScope?.length ?? 0
+  liveModal?.props?.onClose?.()
+  check('弹层关闭动作也接到 openGroupScope(undefined)', (live.api.calls.openGroupScope?.length ?? 0) === closingsBefore + 1 && live.api.calls.openGroupScope?.at(-1)?.[0] === undefined, JSON.stringify(live.api.calls.openGroupScope))
+}
 
 console.log(`\n${problems.length === 0 ? '全部通过' : `${problems.length} 项失败`}`)
-process.exit(problems.length === 0 ? 0 : 1)
+if (problems.length > 0) {
+  console.log('失败项：')
+  for (const problem of problems) console.log(`  - ${problem}`)
+  process.exitCode = 1
+}
