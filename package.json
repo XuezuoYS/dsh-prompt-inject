@@ -3,6 +3,10 @@
   "version": "0.3.0",
   "description": "这是一个适用于 Deepseek Harness 的插件，向用户提供 GUI 下分组的自定义且区分模型的发送 Prompt 注入功能。",
   "private": false,
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "main": "lib/index.js",
   "icon": "./icon.svg",
@@ -48,7 +52,10 @@
   },
   "author": "xuezuoys",
   "homepage": "https://github.com/XuezuoYS/dsh-prompt-inject",
-  "repository": "XuezuoYS/dsh-prompt-inject",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XuezuoYS/dsh-prompt-inject.git"
+  },
   "keywords": [
     "deepseek-harness",
     "dsh",
