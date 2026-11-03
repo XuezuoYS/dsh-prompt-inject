@@ -2,7 +2,7 @@
 // 把每一轮模型实际看到的消息（deriveMessages）逐条打印出来。
 // 用来肉眼核对「上一轮的前后缀到底有没有留在下一轮」这类问题。
 //
-// 用法：node .agents/checks/verify-timeline.mjs
+// 用法：node tests/verify-timeline.mjs
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,7 +13,7 @@ import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 const home = await mkdtemp(join(tmpdir(), 'dsh-pi-timeline-'))
 process.env.DSH_HOME = home
 
-const { apply } = await import('../../lib/index.js')
+const { apply } = await import('../lib/index.js')
 
 const textOf = (message) =>
   (message?.content ?? [])

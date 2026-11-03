@@ -1,5 +1,5 @@
 /**
- * 验收脚本跑批。用法：`node .agents/checks/run.mjs [a|b|all]`（默认 `a`）。
+ * 验收脚本跑批。用法：`node tests/run.mjs [a|b|all]`（默认 `a`）。
  *
  * 为什么分两组：第二组的脚本要 import `@deepseek-ai/*`，那些包在发行包的 `app.asar` 里，
  * 磁盘上没有，得先按 `README.md` 第二节临时抽一份并挂上 `node_modules/@deepseek-ai` 的链接。
@@ -13,8 +13,8 @@
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-/** 仓库根（.agents/checks 往上两层）。子进程统一在这里跑，与手工执行的目录一致。 */
-const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
+/** 仓库根（tests/ 往上一层）。子进程统一在这里跑，与手工执行的目录一致。 */
+const repoRoot = fileURLToPath(new URL('../', import.meta.url))
 
 /** 第一组：不碰官方包。 */
 const groupA = [
@@ -56,12 +56,12 @@ function hasOfficialPackages() {
 
 /**
  * 跑一个脚本，输出直连终端（各脚本自己打印 PASS / 计数）。
- * @param {string} file - `.agents/checks` 下的文件名。
+ * @param {string} file - `tests/` 下的文件名。
  * @returns {Promise<number>} 退出码。
  */
 function runOne(file) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [`.agents/checks/${file}`], {
+    const child = spawn(process.execPath, [`tests/${file}`], {
       cwd: repoRoot,
       stdio: 'inherit',
     })
@@ -96,7 +96,7 @@ async function runGroup(files, title) {
 
 const wanted = (process.argv[2] ?? 'a').toLowerCase()
 if (!Object.hasOwn(groupNames, wanted)) {
-  console.error(`用法：node .agents/checks/run.mjs [a|b|all]，收到 ${JSON.stringify(process.argv[2])}`)
+  console.error(`用法：node tests/run.mjs [a|b|all]，收到 ${JSON.stringify(process.argv[2])}`)
   process.exit(1)
 }
 
@@ -112,7 +112,7 @@ if (wanted === 'b' || wanted === 'all') {
   } else {
     console.log(`\n=== ${groupNames.b}：跳过 ===`)
     console.log('没有 @deepseek-ai/* 可解析。这些包在发行包的 app.asar 里，要先临时抽一份：')
-    console.log('  1) 看 .agents/checks/README.md 第二段的「要达到的形状」和那段 powershell')
+    console.log('  1) 看 tests/README.md 第二段的「要达到的形状」和那段 powershell')
     console.log('  2) 挂好 <仓库根>\\node_modules\\@deepseek-ai 的 junction 之后重跑 npm run test:host')
     console.log('  （只想验第一组的话：npm test 就够，它不需要任何官方包）')
     if (wanted === 'b') process.exit(2)

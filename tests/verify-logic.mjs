@@ -1,11 +1,11 @@
 // 纯逻辑检查：规则解析 / 配置校验 / 还原判据。不需要 DSH 运行时，直接 `node` 跑。
 //
-// 用法：node .agents/checks/verify-logic.mjs
-import { joinRules, modelKeyOf, resolveSlot, ruleApplies } from '../../lib/ruleResolver.js'
-import { modelKeyOfAgent } from '../../lib/modelRoute.js'
-import { validateSlots } from '../../lib/configValidation.js'
-import { emptySlots } from '../../lib/configStore.js'
-import { planRestore } from '../../lib/sessionInjector.js'
+// 用法：node tests/verify-logic.mjs
+import { joinRules, modelKeyOf, resolveSlot, ruleApplies } from '../lib/ruleResolver.js'
+import { modelKeyOfAgent } from '../lib/modelRoute.js'
+import { validateSlots } from '../lib/configValidation.js'
+import { emptySlots } from '../lib/configStore.js'
+import { planRestore } from '../lib/sessionInjector.js'
 
 const results = []
 const check = (name, ok, detail) => {

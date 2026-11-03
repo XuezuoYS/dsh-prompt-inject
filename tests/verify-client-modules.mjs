@@ -5,8 +5,8 @@
 //   - `dsh.client.inject` 里不是 boot graph 行的条目会被安静忽略（0.2.1 语义）；
 //   - 缺了 seed 时 require 会立刻报 “missed the module table”（负向对照，证明 primitives 只能由 seed 给）。
 //
-// 这是一个**手工探针**，没接进 run.mjs（要跑得先有官方包：见 .agents/checks/README.md 第二段）。
-// 用法：node .agents/checks/verify-client-modules.mjs
+// 这是一个**手工探针**，没接进 run.mjs（要跑得先有官方包：见 tests/README.md 第二段）。
+// 用法：node tests/verify-client-modules.mjs
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,7 +17,7 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === undefined ? '' : ` — ${detail}`}`)
 }
 
-const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
+const repoRoot = fileURLToPath(new URL('../', import.meta.url))
 const pluginPath = join(repoRoot, 'lib', 'client.js')
 const pluginSource = readFileSync(pluginPath, 'utf8')
 const pluginManifest = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'))
@@ -31,7 +31,7 @@ try {
   modulesPath = undefined
 }
 if (modulesPath === undefined || !existsSync(modulesPath)) {
-  console.log('跳过：找不到 @deepseek-ai/dsh-client-modules（先按 .agents/checks/README.md 第二段挂官方包）')
+  console.log('跳过：找不到 @deepseek-ai/dsh-client-modules（先按 tests/README.md 第二段挂官方包）')
   process.exit(0)
 }
 console.log(`官方模块系统：${modulesPath}`)

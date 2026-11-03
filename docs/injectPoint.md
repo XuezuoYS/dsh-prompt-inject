@@ -74,4 +74,54 @@ system 段位参照（挑 order 时看）：
 
 ## 背景资料
 
-架构背景、备选路线、实验记录、源码索引：[.agents/archive/2026-10-11-injectPoint-research.md](<../.agents/archive/2026-10-11-injectPoint-research.md>)
+这一节记「为什么这么设计」，想动注入机制前先读这里。调研对象是 DSH 0.2.0-rc.2 的发行包
+（官方代码打进 `app.asar`，抽包手法见 [tests/README.md](tests/README.md) 第二节）。
+
+### 四个决定架构的事实
+
+1. **模型看到的东西 100% 由会话日志推导。** agent loop 每个 step 按 surface 节点顺序取消息；
+   loop 请求对象被官方深冻结、只读。→ 想改模型看到的内容，只能改日志，不能改请求。
+2. **聊天记录只认 append。** 可见 surface 会遮住被替换的区间，官方原话「append 事件才是聊天记录的真源，
+   替换副本只留在模型侧」。→ 用户那条消息永远不动，注入只能是独立消息。
+3. **客户端按 `source.kind` 决定怎么画。** 只有 `kind === "user"` 才画成用户气泡，其它一律画成带标签的上下文行。
+   → 注入消息的 kind 用自己的名字，不会污染用户气泡。
+4. **append 不可重入。** `Session.append` 期间再 append 直接抛错，而 `session/event` 是在 append 内部同步发出的。
+   → 「落库后立刻补一条替换」做不到，前后缀必须是两条独立消息。
+
+### 备选路线（user 前后缀当初怎么选的）
+
+R1 = 当前轮 wire 上前后缀贴着原文；R2 = 历史里只有本轮带前后缀；R3 = UI 永远显示原文。
+
+| 路线 | 做法 | R1 | R2 | R3 | 结论 |
+| --- | --- | --- | --- | --- | --- |
+| A 请求层改写 | `llm/stream` 里另造请求重发 | ✓ | ✓ | ✓ | 不采用：loop 请求只读是官方明规，还得自防重入、自判 loop 请求（判据是模块私有 WeakSet），跨版本最容易碎 |
+| B 日志注入 | `agent/pre-step` 插独立消息 | ✓ | ✓ | △ 历史里留上下文卡片 | **采用**：全官方 API，跨版本风险低 |
+| C 只注入不还原 | 官方 `systemPrompt.context` 的做法 | ✓ | ✗ | △ | 不采用：历史会一直累积前后缀 |
+
+R3 的 △ 是路线 B 的已知代价：聊天记录里每轮多两张 `prompt-inject` 上下文卡片，替换删不掉。
+（2026-10-12 起「自动还原」整体下线、注入永久保留，见上文「用户前置词 / 后置词」。）
+
+### 关键实测结论（真官方包上验过）
+
+- 同一作用域重名注册官方 persona 段会被**静默拒绝**（fiber 进失败态不抛错），桌面 preset 又本来就挂了官方
+  persona 行 → persona 头尾只能改写已有段，不能重名注册。
+- 行插件挂载是**异步**的（约一 tick 后才生效）→ 段注册走全局 `section()` + 函数式 `text`，
+  在 `system-prompt/assemble` 里按 `context.agent` 区分会话与模型，不按 agent 挂。
+- 作用域 ctx 上不能直接调 `agentCtx.systemPrompt.section(...)`（`cannot get property … without inject`）。
+
+### 官方源码索引（改注入机制时按图索骥）
+
+| 包 | 关键内容 |
+| --- | --- |
+| `dsh-system-prompt` | `section` / `context` / `variable` / `tools` 四个注册口、`system-prompt/assemble` waterfall、`renderPrompt`、`SECTION_ORDERS` |
+| `dsh-agent-loop` | `preStep()`（`agent/pre-step` 派发点）、`step()`（消息落库）、`buildRequest()` |
+| `dsh-agent` | `assembleContextFor()`、`installModelSelection()`（官方 pre-step 用法范例） |
+| `dsh-persona` | 官方 persona 行插件：prefix / suffix / complete |
+| `dsh-llm` | `LlmRuntime.stream()`（`llm/stream`）、loop 请求标记（模块私有 WeakSet） |
+| `dsh-llm-deepseek` | `serialize()`：连续 user 消息合并成一条、空 user 跳过、请求字段扩展注册表 |
+| `dsh-session` | surface 折叠、`deriveMessages()`、`isAppendSurfaceEvent`、append 重入保护、system 第 0 节点保护 |
+| `dsh-client-ui-chat` | 按 `source.kind` 分流渲染消息 |
+| `dsh-client-connection` | `/api` 路由：先 `admit()` 再分发，只支持 GET / HEAD / POST |
+| `dsh-tool-cordis` | 官方 API 目录（查事件签名先看它） |
+
+索引基于 0.2.0-rc.2；升 dsh 后包名不变、细节会变。

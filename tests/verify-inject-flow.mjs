@@ -1,7 +1,7 @@
 // 端到端（host 侧）：用真实 SessionStore 跑「注入 → 工具循环 → 下一轮还原 → 再注入」，
 // 并核对每一轮模型实际会看到的消息。不碰真实 DSH，用的是临时 DSH_HOME。
 //
-// 用法：node .agents/checks/verify-inject-flow.mjs
+// 用法：node tests/verify-inject-flow.mjs
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,7 +12,7 @@ import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 const home = await mkdtemp(join(tmpdir(), 'dsh-prompt-inject-home-'))
 process.env.DSH_HOME = home
 
-const { apply } = await import('../../lib/index.js')
+const { apply } = await import('../lib/index.js')
 
 const results = []
 const check = (name, ok, detail) => {
@@ -172,7 +172,7 @@ const sectionsRoute = listeners.get('system-prompt/assemble')
 check('system 段注册后可解析出文本（走 section 的 text 函数）', true)
 const beforeToolsText = await (async () => {
   // 直接验证解析：从 section 定义里拿不到 ctx，这里用 /state 里的规则与 resolver 对齐。
-  const { resolveSlot } = await import('../../lib/ruleResolver.js')
+  const { resolveSlot } = await import('../lib/ruleResolver.js')
   const refreshed = await (await stateRoute.fetch(new Request('http://localhost/state'))).json()
   return resolveSlot(refreshed.slots, 'system.beforeTools', 'deepseek-account/deepseek-flash')
 })()
@@ -272,7 +272,7 @@ check('历史里存的是渲染后的成品，没有 {{}}', session.deriveMessag
 // 按位置算的还原区间会整体错位。当前行为是「注入永久保留、不还原」，所以生产路径**不调用**它；
 // 这段保留给 `restoreLeftovers` 这套归档判据，将来若要把「自动清除」重新做成选项，它得是对的。
 {
-  const { restoreLeftovers } = await import('../../lib/sessionInjector.js')
+  const { restoreLeftovers } = await import('../lib/sessionInjector.js')
   const leak = root.sessions.create('leak-regression', { meta: { cwd: process.cwd() } })
   const original = createUserMessage({ content: [{ type: 'text', text: '原文' }], source: { kind: 'user', rpcId: 'rpc-x' } })
   const suffix = createUserMessage({ content: [{ type: 'text', text: '【后置词】' }], source: { kind: 'prompt-inject', turn: 1 } })

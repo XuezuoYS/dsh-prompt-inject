@@ -3,10 +3,10 @@
 // 这一份是**真集成**：真 `@deepseek-ai/dsh-system-prompt` 服务 + 真 `renderPrompt`，不是假 ctx。
 // 官方插值器遇到未注册的变量会直接抛错，所以这段必须真跑一遍。
 //
-// 用法：node .agents/checks/verify-assemble-render.mjs（需要官方包，见 .agents/checks/README.md）
+// 用法：node tests/verify-assemble-render.mjs（需要官方包，见 tests/README.md）
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
-import { registerSystemSections } from '../../lib/systemSections.js'
+import { registerSystemSections } from '../lib/systemSections.js'
 
 const results = []
 const check = (name, ok, detail) => {

@@ -1,6 +1,6 @@
 // 配置读写的真实文件测试：在临时 DSH_HOME 里跑，不碰真实配置。
 //
-// 用法：node .agents/checks/verify-config-store.mjs
+// 用法：node tests/verify-config-store.mjs
 import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,8 +8,8 @@ import { join } from 'node:path'
 const home = await mkdtemp(join(tmpdir(), 'dsh-prompt-inject-home-'))
 process.env.DSH_HOME = home
 
-const { ConfigStore, CONFIG_FILE, emptySlots } = await import('../../lib/configStore.js')
-const { validateSlots } = await import('../../lib/configValidation.js')
+const { ConfigStore, CONFIG_FILE, emptySlots } = await import('../lib/configStore.js')
+const { validateSlots } = await import('../lib/configValidation.js')
 
 const results = []
 const check = (name, ok, detail) => {

@@ -5,10 +5,10 @@
 // 1. 模型设置一改就重拉（不用重启 dsh、不用刷新页面）；
 // 2. 重拉**只换目录**：规则、revision、保存状态都别动——用户可能正在打字，本地乐观更新还没提交。
 //
-// 用法：node .agents/checks/verify-catalog-refresh.mjs
+// 用法：node tests/verify-catalog-refresh.mjs
 import { readFile } from 'node:fs/promises'
 
-const { CATALOG_INVALIDATION_EVENTS } = await import('../../lib/settingsApi.js')
+const { CATALOG_INVALIDATION_EVENTS } = await import('../lib/settingsApi.js')
 
 const problems = []
 const check = (name, ok, detail) => {
@@ -23,7 +23,7 @@ const react = { useState: (initial) => [initial, () => {}], useMemo: (factory) =
 const jsxRuntime = { jsx: (type, props) => ({ type, props: props ?? {} }), jsxs: (type, props) => ({ type, props: props ?? {} }) }
 
 // ---------- 加载客户端半 ----------
-const source = await readFile(new URL('../../lib/client.js', import.meta.url), 'utf8')
+const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
 const registrations = []
 globalThis.window = { __ModuleLoader__: { load: (registration) => registrations.push(registration) } }
 // eslint-disable-next-line no-eval

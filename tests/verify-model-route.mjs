@@ -6,10 +6,10 @@
 // 现在判据优先读官方的模型选择投影（`modelSelection` 的 pending，与 `dsh-agent` 的
 // `installModelSelection` 同一份状态），再退回 requestContext / agent.options。
 //
-// 这个脚本只 import 插件自己的模块，因此不需要官方包：node .agents/checks/verify-model-route.mjs
-import { modelKeyOfAgent, modelKeyOfAssembly, modelKeyOfSelection, modelKeyOfSession } from '../../lib/modelRoute.js'
-import { resolveSlot } from '../../lib/ruleResolver.js'
-import { registerSystemSections } from '../../lib/systemSections.js'
+// 这个脚本只 import 插件自己的模块，因此不需要官方包：node tests/verify-model-route.mjs
+import { modelKeyOfAgent, modelKeyOfAssembly, modelKeyOfSelection, modelKeyOfSession } from '../lib/modelRoute.js'
+import { resolveSlot } from '../lib/ruleResolver.js'
+import { registerSystemSections } from '../lib/systemSections.js'
 
 const results = []
 const check = (name, ok, detail) => {

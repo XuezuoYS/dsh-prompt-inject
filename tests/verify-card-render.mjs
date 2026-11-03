@@ -3,9 +3,9 @@
 // 只 stub React / jsx-runtime / 官方原语：`jsx(type, props)` 遇到函数组件就继续往里渲染
 // （`keep` 可以指定某些组件不展开，方便直接读它收到的 props），不需要 DOM，也不需要 DSH 运行时。
 //
-// 用法：node .agents/checks/verify-card-render.mjs
+// 用法：node tests/verify-card-render.mjs
 import { readFile } from 'node:fs/promises'
-import { TEMPLATE_FIELDS } from '../../lib/templateFields.js'
+import { TEMPLATE_FIELDS } from '../lib/templateFields.js'
 
 const problems = []
 const check = (name, ok, detail) => {
@@ -145,7 +145,7 @@ function makePrimitives() {
 const primitives = makePrimitives()
 
 // ---------- 加载客户端半 ----------
-const source = await readFile(new URL('../../lib/client.js', import.meta.url), 'utf8')
+const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
 const registrations = []
 globalThis.window = { __ModuleLoader__: { load: (registration) => registrations.push(registration) } }
 // eslint-disable-next-line no-eval

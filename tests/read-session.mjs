@@ -2,17 +2,17 @@
 //
 // 为什么要它：会话日志是 `.jsonl.zstd`，而且是**多帧拼接**的（每次 append 一帧），
 // Node 的 `zstdDecompressSync` 只解第一帧。真机上「这轮算的哪个模型、注入了什么」只能靠它核对：
-//   node .agents/checks/read-session.mjs "$env:USERPROFILE\.dsh\sessions\<工作区>\<会话>\session.v4.jsonl.zstd"
+//   node tests/read-session.mjs "$env:USERPROFILE\.dsh\sessions\<工作区>\<会话>\session.v4.jsonl.zstd"
 // 时间线里 CTX=request/context（已提交的路由）、SEL=model/selection（用户点下拉）、
 // HDR=request/header、INJ/USR=用户消息（带 source.kind）。
 //
-// 用法：node .agents/checks/read-session.mjs <session.v4.jsonl.zstd> [摘要|时间线]
+// 用法：node tests/read-session.mjs <session.v4.jsonl.zstd> [摘要|时间线]
 import { readFileSync } from 'node:fs'
 import { zstdDecompressSync } from 'node:zlib'
 
 const [, , input, mode = '时间线'] = process.argv
 if (input === undefined) {
-  console.error('用法：node .agents/checks/read-session.mjs <session.v4.jsonl.zstd> [摘要|时间线]')
+  console.error('用法：node tests/read-session.mjs <session.v4.jsonl.zstd> [摘要|时间线]')
   process.exit(2)
 }
 

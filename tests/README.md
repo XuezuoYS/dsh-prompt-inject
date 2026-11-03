@@ -1,4 +1,4 @@
-# .agents/checks 怎么跑
+# tests/ 怎么跑
 
 这些脚本只用来验收插件，不属于交付物。分两类。
 
@@ -24,11 +24,11 @@ npm run test:all    # 两类一起
 ```powershell
 npm test
 # 等价于逐个跑：
-node .agents/checks/client-shape.mjs
-node .agents/checks/verify-template-fields.mjs
-node .agents/checks/verify-card-render.mjs
-node .agents/checks/verify-panel-toggle.mjs
-node .agents/checks/verify-model-route.mjs
+node tests/client-shape.mjs
+node tests/verify-template-fields.mjs
+node tests/verify-card-render.mjs
+node tests/verify-panel-toggle.mjs
+node tests/verify-model-route.mjs
 ```
 
 `read-session.mjs` 是查真机用的探针（不 import 任何包）：把会话日志 `.jsonl.zstd` 解成时间线，
@@ -37,7 +37,7 @@ node .agents/checks/verify-model-route.mjs
 ```powershell
 # 会话目录名由工作目录转义而来（`D:\proj\dsh-x` → `--D-proj-dsh-x--`），先列一下再挑
 Get-ChildItem "$env:USERPROFILE\.dsh\sessions" | Select-Object -ExpandProperty Name
-node .agents/checks/read-session.mjs "$env:USERPROFILE\.dsh\sessions\<转义后的工作目录>\session-xxxx\session.v4.jsonl.zstd" 摘要
+node tests/read-session.mjs "$env:USERPROFILE\.dsh\sessions\<转义后的工作目录>\session-xxxx\session.v4.jsonl.zstd" 摘要
 ```
 
 > 日志是**多帧拼接**的 zstd（每次 append 一帧），Node 的 `zstdDecompressSync` 只解第一帧，
@@ -88,13 +88,13 @@ $asar = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\app.asar"
 $flat = "$env:TEMP\dsh-pi\ok"
 $umb  = "$flat\node_modules\@deepseek-ai"
 
-# 1) 抽包。现成读取器：`.agents/tools/asar2.cjs`，用法 `list` / `read` / `extract`。
+# 1) 抽包。现成读取器：`scripts/tools/asar2.cjs`，用法 `list` / `read` / `extract`。
 #    innerPath 给到 `dsh/node_modules/@deepseek-ai`：它会剥掉这段前缀，于是每个包正好平铺成
 #    $flat\<包名>（不带作用域目录）——这是下面套 junction 的前提。
-node .agents/tools/asar2.cjs extract $asar "dsh/node_modules/@deepseek-ai" $flat
+node scripts/tools/asar2.cjs extract $asar "dsh/node_modules/@deepseek-ai" $flat
 
 # 1b)（可选）连 `dsh` 主包一起解出来，查 host 源码 / CSS 变量时用得上
-node .agents/tools/asar2.cjs extract $asar "dsh" "$flat\dsh"
+node scripts/tools/asar2.cjs extract $asar "dsh" "$flat\dsh"
 
 # 2) 套一层 @deepseek-ai 目录 —— 官方包互引（如 cordis 引 @deepseek-ai/cosmokit）
 #    要求包目录真的位于某个 node_modules/@deepseek-ai/ 下面
@@ -120,9 +120,9 @@ Remove-Item $flat -Recurse -Force
 > 探不到就打印上面这段搭法并**退出码 2**（和断言失败的 1 区分开）。
 >
 > **安装包的坑**：这份发行包的 asar 数据区起点是 `16 + pickledSize - 8`，不是官方 reader 的
-> `16 + pickledSize`；用后者会把每个文件的开头吃掉 8 字节。现成可用的读取器在
-> `.agents/tools/asar2.cjs`（`.agents/archive/2026-10-11-asar-reader.js` 是早期版本，
-> 而且直接 `node` 跑它会失败：仓库根 `package.json` 是 `"type": "module"`，`.js` 会被当 ESM）。
+> `16 + pickledSize`；用后者会把每个文件的开头吃掉 8 字节。现成可用的读取器是
+> `scripts/tools/asar2.cjs`（`.cjs` 后缀是故意取的：仓库根 `package.json` 是 `"type": "module"`，
+> `.js` 会被当 ESM 直接跑不起来）。
 >
 > 插件自己在运行时**不需要**这份 `node_modules`：它把 `@deepseek-ai/*` 声明成 `peerDependencies`。
 > DSH 的解析层（`dsh-app-boot` 的 `routeLinked`）对「linked 插件」的规则是——目标包必须在安装目录的

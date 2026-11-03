@@ -2,7 +2,7 @@
 // 以及「模型设置变了 → 宿主目录缓存立刻失效」（见 verify-catalog-refresh.mjs 的客户端那一半）。
 // 用假的 ctx 跑，不碰真实 DSH。
 //
-// 用法：node .agents/checks/verify-host-wiring.mjs
+// 用法：node tests/verify-host-wiring.mjs
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,9 +10,9 @@ import { join } from 'node:path'
 const home = await mkdtemp(join(tmpdir(), 'dsh-prompt-inject-home-'))
 process.env.DSH_HOME = home
 
-const { apply, inject } = await import('../../lib/index.js')
-const { INJECT_POINTS, middleSectionPoints, replacedSectionPoints } = await import('../../lib/injectPoints.js')
-const { CATALOG_INVALIDATION_EVENTS } = await import('../../lib/settingsApi.js')
+const { apply, inject } = await import('../lib/index.js')
+const { INJECT_POINTS, middleSectionPoints, replacedSectionPoints } = await import('../lib/injectPoints.js')
+const { CATALOG_INVALIDATION_EVENTS } = await import('../lib/settingsApi.js')
 
 const results = []
 const check = (name, ok, detail) => {

@@ -10,7 +10,7 @@ globalThis.window = {
   },
 }
 
-const source = await readFile(new URL('../../lib/client.js', import.meta.url), 'utf8')
+const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
 // 与浏览器一样的执行方式：普通脚本，直接 eval 进全局。
 // eslint-disable-next-line no-eval
 ;(0, eval)(source)
@@ -127,7 +127,7 @@ else {
 
 // ---------- 与 host 的「目录失效」事件表对表 ----------
 // 客户端半是手写 bundle，事件名是内联复制的一份；改表时两边必须一起改。
-const { CATALOG_INVALIDATION_EVENTS } = await import('../../lib/settingsApi.js')
+const { CATALOG_INVALIDATION_EVENTS } = await import('../lib/settingsApi.js')
 const subscribed = remoteSubscriptions.map((item) => item.event)
 if (JSON.stringify(subscribed.filter((event) => event !== 'connection/reset')) !== JSON.stringify(CATALOG_INVALIDATION_EVENTS)) {
   problems.push(`client 订阅的失效事件与 host 不一致：client ${JSON.stringify(subscribed)} vs host ${JSON.stringify(CATALOG_INVALIDATION_EVENTS)}`)
@@ -138,7 +138,7 @@ if (!subscribed.includes('connection/reset')) problems.push('client 必须在重
 // client 是手写 bundle，注入点表是内联复制的一份；改表时两边必须一起改。
 // 只对两件真正会出问题的事：**键集合一致**、**notice 文案一致**。
 // label / hint 是给 UI 看的短文案，两边本来就按排版需要写得不同，不做约束。
-const { INJECT_POINTS } = await import('../../lib/injectPoints.js')
+const { INJECT_POINTS } = await import('../lib/injectPoints.js')
 const clientTable = new Map()
 {
   const tableStart = source.indexOf('const INJECT_POINTS = [')

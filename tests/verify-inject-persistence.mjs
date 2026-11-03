@@ -10,7 +10,7 @@
 // 3. 不再产生任何被抹掉的空占位；
 // 4. 工具循环里不会重复注入。
 //
-// 用法：node .agents/checks/verify-inject-persistence.mjs
+// 用法：node tests/verify-inject-persistence.mjs
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,7 +21,7 @@ import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 const home = await mkdtemp(join(tmpdir(), 'dsh-pi-leak-'))
 process.env.DSH_HOME = home
 
-const { apply } = await import('../../lib/index.js')
+const { apply } = await import('../lib/index.js')
 
 const results = []
 const check = (name, ok, detail) => {

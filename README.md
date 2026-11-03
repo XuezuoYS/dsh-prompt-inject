@@ -181,11 +181,11 @@ system 那六项的两种做法分得很清楚：
 
 动手前值得知道的几件事：
 
-- 注入点表有两份：`lib/injectPoints.js` 是权威的那份，`lib/client.js` 里内联了一份一模一样的（客户端半不能 import）。改表要两边一起改，`.agents/checks/client-shape.mjs` 会检查两边是否一致。
+- 注入点表有两份：`lib/injectPoints.js` 是权威的那份，`lib/client.js` 里内联了一份一模一样的（客户端半不能 import）。改表要两边一起改，`tests/client-shape.mjs` 会检查两边是否一致。
 - `@deepseek-ai/*` 一律声明成 `peerDependencies`，不能装成本地依赖 —— 那样会变成两份模块实例，`instanceof` 和模块私有的 WeakSet 都会失效。
 - 客户端半只在浏览器里 `require('@deepseek-ai/dsh-client-ui-primitives')`。从 0.2.1 起它不再是磁盘上的独立包，而是 web 前端模块表里的 baseline 模块（`require` 照样解析得到），所以 `dsh.client.inject` 里不列它；`peerDependencies` 里那份只是标版本。新版 `dsh.client` 另有 `external`（声明非 baseline 的动态包）和 `immediately`，我们都没用到。
 - 端点开在官方 `/api` 下面，鉴权由官方那层处理，插件自己不写；所以只支持 `GET` / `HEAD` / `POST`。
-- 校验脚本分两组：`npm test` 跑纯 node 那组（clone 下来就能验，不依赖任何官方包）；`npm run test:host` 跑要官方包那组，没临时解包会直接退出码 2 并打印怎么搭（`npm run test:all` 两类一起）。细节见 [.agents/checks/README.md](.agents/checks/README.md)。
+- 校验脚本分两组：`npm test` 跑纯 node 那组（clone 下来就能验，不依赖任何官方包）；`npm run test:host` 跑要官方包那组，没临时解包会直接退出码 2 并打印怎么搭（`npm run test:all` 两类一起）。细节见 [tests/README.md](tests/README.md)。
 - host 侧代码改了要重启 dsh；只改客户端那一半刷新页面就行。
 - 项目协作规范见 [AGENTS.md](AGENTS.md)。
 

@@ -12,7 +12,7 @@
 // - `credentials/record-updated` / `credentials/reference-updated`：`@deepseek-ai/dsh-credentials/lib/index.js` 的 `fanOut(...)`。
 // 官方模型设置页听的正是这一套（`dsh-client-ui-settings-models` 的 `refreshIfLoaded`）。
 //
-// 用法：node .agents/checks/verify-catalog-events.mjs
+// 用法：node tests/verify-catalog-events.mjs
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,8 +20,8 @@ import { join } from 'node:path'
 process.env.DSH_HOME = await mkdtemp(join(tmpdir(), 'dsh-prompt-inject-home-'))
 
 const { Context } = await import('@deepseek-ai/cordis')
-const pluginModule = await import('../../lib/index.js')
-const { CATALOG_INVALIDATION_EVENTS } = await import('../../lib/settingsApi.js')
+const pluginModule = await import('../lib/index.js')
+const { CATALOG_INVALIDATION_EVENTS } = await import('../lib/settingsApi.js')
 
 const results = []
 const check = (name, ok, detail) => {

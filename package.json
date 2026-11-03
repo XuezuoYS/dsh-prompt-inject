@@ -7,9 +7,9 @@
   "main": "lib/index.js",
   "icon": "./icon.svg",
   "scripts": {
-    "test": "node .agents/checks/run.mjs a",
-    "test:host": "node .agents/checks/run.mjs b",
-    "test:all": "node .agents/checks/run.mjs all"
+    "test": "node tests/run.mjs a",
+    "test:host": "node tests/run.mjs b",
+    "test:all": "node tests/run.mjs all"
   },
   "exports": {
     ".": "./lib/index.js",

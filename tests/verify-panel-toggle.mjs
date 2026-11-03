@@ -7,7 +7,7 @@
 // 这里用真实的 Controller（通过 `slots.register` 的 inject 面拿到），按真实链路走一遍：
 // 点标题 → 控制器发布新快照 → 用新快照重渲染 → 卡片出现/消失。
 //
-// 用法：node .agents/checks/verify-panel-toggle.mjs
+// 用法：node tests/verify-panel-toggle.mjs
 import { readFile } from 'node:fs/promises'
 
 const problems = []
@@ -87,7 +87,7 @@ function makePrimitives() {
 const primitives = makePrimitives()
 
 // ---------- 加载客户端半并挂载 ----------
-const source = await readFile(new URL('../../lib/client.js', import.meta.url), 'utf8')
+const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
 const registrations = []
 globalThis.window = { __ModuleLoader__: { load: (registration) => registrations.push(registration) } }
 // eslint-disable-next-line no-eval

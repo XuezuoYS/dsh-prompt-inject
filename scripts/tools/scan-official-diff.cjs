@@ -1,5 +1,5 @@
 // 对比两棵解包出来的官方包树，列出新增 / 删除 / 改动的文件。升级 dsh 时先跑它圈定范围。
-// 用法：node .agents/tools/scan-official-diff.cjs <旧树> <新树> [包名子串过滤...]
+// 用法：node scripts/tools/scan-official-diff.cjs <旧树> <新树> [包名子串过滤...]
 const fs = require('node:fs')
 const path = require('node:path')
 

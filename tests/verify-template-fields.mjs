@@ -1,7 +1,7 @@
 // 模板字段的纯逻辑回归：白名单、渲染规则、取值兜底。
 //
-// 只 import 插件自己的模块，不需要官方包：node .agents/checks/verify-template-fields.mjs
-import { TEMPLATE_FIELDS, mergeTemplateValues, renderTemplate, templateValuesOfAgent } from '../../lib/templateFields.js'
+// 只 import 插件自己的模块，不需要官方包：node tests/verify-template-fields.mjs
+import { TEMPLATE_FIELDS, mergeTemplateValues, renderTemplate, templateValuesOfAgent } from '../lib/templateFields.js'
 
 const results = []
 const check = (name, ok, detail) => {

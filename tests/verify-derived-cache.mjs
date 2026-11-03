@@ -9,11 +9,11 @@
 //   A. 替换之后没人读过历史 → 安全网必须触发，否则后面的读取会从错位置切片；
 //   B. 替换之后已经有人读过 → 安全网不该触发，历史本身已经正确。
 //
-// 运行方式：见 .agents/checks/README.md（需要一份带 node_modules 的实验目录）。
+// 运行方式：见 tests/README.md（需要一份带 node_modules 的实验目录）。
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { isAppendSurfaceEvent } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { repairDerivedCache } from '../../lib/sessionInjector.js'
+import { repairDerivedCache } from '../lib/sessionInjector.js'
 
 const results = []
 const check = (name, ok, detail) => {
