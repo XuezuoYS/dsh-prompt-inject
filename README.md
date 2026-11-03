@@ -1,5 +1,7 @@
 # @xuezuoys/dsh-prompt-inject
 
+[![Release](https://github.com/XuezuoYS/dsh-prompt-inject/actions/workflows/publish.yml/badge.svg)](https://github.com/XuezuoYS/dsh-prompt-inject/actions/workflows/publish.yml)
+
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（下称 dsh）的一个插件：在设置页里，按**组**和**模型**配置要注入的提示词。
 
 装好之后，设置里多出一项「dsh-prompt-inject」。页面是一张张组卡片：组有名字、开关、模型作用域，下面排着 8 个注入位置。位置默认关着，点开才能写文字。组的上下顺序，就是同一个位置拼合时的先后顺序。改完自动保存，下一轮对话就用新值。
@@ -234,6 +236,7 @@ system 那六项的两种做法分得很清楚：
 | [docs/settingGUI.md](docs/settingGUI.md) | 设置界面、数据通道（三个 `/api` 端点）、目录刷新的事件表 |
 | [docs/userData.md](docs/userData.md) | 数据文件结构、字段、拼合、上限、坏文件与迁移 |
 | [docs/userDataUpdateLog.md](docs/userDataUpdateLog.md) | 数据模型版本记录、v1 → v2 迁移 |
+| [docs/release.md](docs/release.md) | 发布流程：打 tag、推 release 分支、CI 怎么判断该不该发 |
 
 动手前值得知道的几件事：
 
@@ -243,6 +246,7 @@ system 那六项的两种做法分得很清楚：
 - 端点开在官方 `/api` 下面，鉴权由官方那层处理，插件自己不写；所以只支持 `GET` / `HEAD` / `POST`。
 - 校验脚本分两组：`npm test` 跑纯 node 那组（clone 下来就能验，不依赖任何官方包）；`npm run test:host` 跑要官方包那组，没临时解包会直接退出码 2 并打印怎么搭（`npm run test:all` 两类一起）。细节见 [tests/README.md](tests/README.md)。
 - host 侧代码改了要重启 dsh；只改客户端那一半刷新页面就行。
+- 发布走「打 tag → 推 `release` 分支」，剩下的交给 `.github/workflows/publish.yml`：CI 找最近的 tag，已在 release 里就结束，否则跑测试、发 npm、建 GitHub Release。细节见 [docs/release.md](docs/release.md)。
 - 项目协作规范见 [AGENTS.md](AGENTS.md)。
 
 ## 许可

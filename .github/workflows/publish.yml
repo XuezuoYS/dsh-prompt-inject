@@ -1,0 +1,238 @@
+# 发布流水线：往 release 分支推一次，就看有没有「新 tag」要发。
+#
+# 判定顺序：
+#   1. 最近的 tag：从这次推上来的提交往回走（git describe --tags --abbrev=0），
+#      第一个打着 tag 的提交就是它。tag 名要和那份代码里 package.json 的版本对得上（vX.Y.Z）。
+#   2. 这个 tag 进过 release 没有：拿它和「这次推送之前的 release 提交」（github.event.before）比，
+#      是祖先就说明这个版本早就发过，detect 直接结束，发布任务不跑。
+#   3. 还不是祖先，就说明这次推送带来了新版本：检出那个 tag，跑测试、npm publish、建 GitHub Release。
+#
+# 为什么不用当前 release HEAD 判断：release 一般从 master 快进过来，tag 天然是 HEAD 的祖先，
+# 拿 HEAD 判断会让每次推送都被跳过。和推送前的状态比，「新版本进来了」和「只是又推一次」才分得开。
+#
+# 认证走 npmjs.com 的 Trusted Publishing（OIDC），仓库里不放长期 token：
+#   npmjs.com → 这个包 → Settings → Trusted publishing → 加 GitHub Actions，
+#   owner = XuezuoYS，repository = dsh-prompt-inject，workflow filename = publish.yml，
+#   允许 npm publish。第一次发布仍要本地 npm login && npm publish 先把包建出来。
+#   npm 要求 CLI 11.5.1+，Node 24 自带的 npm 满足。
+#
+# 这个仓库没有运行时依赖、没有锁文件、也没有构建步骤，所以 CI 里不装任何东西：
+# 测试就是 node 直跑的验收脚本（tests/run.mjs 第一组；第二组要发行包 app.asar 里的官方包，CI 跑不了）。
+
+name: Release
+
+on:
+  push:
+    branches:
+      - release
+
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.resolve.outputs.release }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      commit: ${{ steps.resolve.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve the nearest tag
+        id: resolve
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          zero='0000000000000000000000000000000000000000'
+          echo "release 这次推到：$GITHUB_SHA"
+          echo "推送之前 release 在：${BEFORE:-（没有）}"
+
+          nearest="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -z "$nearest" ]; then
+            echo "::notice::release 的历史上还没有 tag，没有可发的版本"
+            {
+              echo "### Release"
+              echo ""
+              echo "release 上没有 tag，跳过。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          version_of() {
+            git show "$1:package.json" | node -e 'let s = ""; process.stdin.on("data", (d) => { s += d }).on("end", () => console.log(JSON.parse(s).version))'
+          }
+
+          commit="$(git rev-parse "$nearest^{commit}")"
+          version="$(version_of "$commit")"
+
+          # 同一个提交上可能挂了多个 tag，优先挑和版本对得上的那个。
+          tag="$nearest"
+          expected="v$version"
+          for candidate in $(git tag --points-at "$commit"); do
+            if [ "$candidate" = "$expected" ]; then tag="$candidate"; fi
+          done
+          if [ "$tag" != "$expected" ]; then
+            echo "::error::最近是 tag $tag（提交 ${commit:0:7}），那份代码的版本是 $version，对不上。按规矩 tag 名就是 v 加 package.json 的版本（$expected）。"
+            exit 1
+          fi
+
+          # 推上来的代码版本比最近的 tag 还新，多半是新版本忘了打 tag，或者推的时候忘了带 --tags。
+          head_version="$(version_of "$GITHUB_SHA")"
+          if [ "$head_version" != "$version" ]; then
+            echo "::warning::这次推上来的 HEAD 版本是 $head_version，最近能看到的 tag 还是 $tag（$version）。是不是忘了打 tag，或者推的时候没带 --tags？"
+          fi
+
+          # tag 进过 release 没有：和推送前的 release 提交比。
+          # 拿不到推送前的提交（新分支、强推后旧提交已不可达）时按「新版本」处理，
+          # 发布那一步有 npm / release 的幂等守卫，多发一次也发不出去。
+          before_known=false
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "$zero" ]; then
+            if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              git fetch --quiet --no-tags origin "$BEFORE" 2>/dev/null || true
+            fi
+            if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then before_known=true; fi
+          fi
+
+          already=false
+          if [ "$before_known" = true ] && git merge-base --is-ancestor "$commit" "$BEFORE"; then
+            already=true
+          fi
+
+          if [ "$already" = true ]; then
+            echo "::notice::tag $tag（${commit:0:7}）在推送前的 release 里已经有了，这个版本发过，跳过"
+            release_flag=false
+          else
+            echo "tag $tag（${commit:0:7}）还没进 release，开始发布 $version"
+            release_flag=true
+          fi
+          {
+            echo "release=$release_flag"
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "commit=$commit"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release"
+            echo ""
+            echo "- 最近的 tag：\`$tag\`"
+            echo "- 版本：\`$version\`"
+            echo "- 提交：\`$commit\`"
+            echo "- 本次 HEAD 版本：\`$head_version\`"
+            echo "- 推送前 release：\`${BEFORE:-无}\`"
+            if [ "$already" = true ]; then
+              echo "- 结论：tag 已在 release 里，跳过发布"
+            else
+              echo "- 结论：新版本，进入发布"
+            fi
+            if [ "$head_version" != "$version" ]; then
+              echo "- 注意：HEAD 版本和最近的 tag 不一致，检查是不是漏了 tag 或 \`--tags\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish to npm
+    needs: detect
+    if: needs.detect.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.detect.outputs.commit }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Check the checked-out version
+        env:
+          EXPECTED_VERSION: ${{ needs.detect.outputs.version }}
+          EXPECTED_COMMIT: ${{ needs.detect.outputs.commit }}
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          actual="$(node -p 'require("./package.json").version')"
+          echo "检出提交 $head，版本 $actual"
+          if [ "$head" != "$EXPECTED_COMMIT" ]; then
+            echo "::error::检出的提交是 $head，和 detect 认到的 $EXPECTED_COMMIT 不一致"
+            exit 1
+          fi
+          if [ "$actual" != "$EXPECTED_VERSION" ]; then
+            echo "::error::检出代码的版本是 $actual，和 detect 认到的 $EXPECTED_VERSION 不一致"
+            exit 1
+          fi
+
+      - name: Test
+        run: npm test
+
+      - name: Check the package contents
+        run: npm pack --dry-run
+
+      - name: Publish to npm
+        id: npm
+        run: |
+          set -euo pipefail
+          name="$(node -p 'require("./package.json").name')"
+          version="$(node -p 'require("./package.json").version')"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "::notice::$name@$version 已经在 npm 上，跳过发布"
+            echo "published=already" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          npm publish
+          echo "published=now" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.detect.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::GitHub Release $TAG 已经在了，跳过"
+            exit 0
+          fi
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes "无更新日志"
+
+      - name: Summarize
+        if: always()
+        env:
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          COMMIT: ${{ needs.detect.outputs.commit }}
+          PUBLISHED: ${{ steps.npm.outputs.published }}
+        run: |
+          {
+            echo "### 发布结果"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| tag | \`${TAG:-无}\` |"
+            echo "| 版本 | \`${VERSION:-无}\` |"
+            echo "| 提交 | \`${COMMIT:-无}\` |"
+            echo "| npm | ${PUBLISHED:-未走到发布步骤} |"
+          } >> "$GITHUB_STEP_SUMMARY"
