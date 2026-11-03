@@ -115,10 +115,10 @@ if (controller === undefined) {
 }
 const snapshot = () => controller.getSnapshot()
 const groupById = (id) => snapshot().groups.find((group) => group.id === id)
-/** 模拟「编辑结束」（blur）：flush 待保存内容，等一拍让 fetch 落地。 */
+/** 模拟「编辑结束」（blur）：flush 待保存内容，并等所有在飞 / 排队的保存落地。 */
 const waitSave = async () => {
   controller.flushSave()
-  await waitTick()
+  for (let i = 0; i < 100 && (controller.saving || controller.saveAgain); i += 1) await waitTick()
   await waitTick()
 }
 
@@ -142,8 +142,7 @@ check('新组默认对全部模型生效', same(created.models, { all: true, lis
 check('新组带完整 8 个位置键', same(Object.keys(created.positions), POINT_KEYS), JSON.stringify(Object.keys(created.positions)))
 check('新组的位置默认关且空', POINT_KEYS.every((key) => same(created.positions[key], { enabled: false, text: '' })), JSON.stringify(created.positions))
 check('新组 id 与返回值一致', created.id === newId, `${created.id} / ${newId}`)
-check('新增后进入黄色等待状态', snapshot().status === 'waiting' && snapshot().message === '等待编辑结束后保存', `${snapshot().status} / ${snapshot().message}`)
-check('等待期间还没发保存请求', posts.length === 0, String(posts.length))
+check('新增组是离散操作：立即保存，不进入黄色等待', snapshot().status !== 'waiting', `${snapshot().status} / ${snapshot().message}`)
 
 await waitSave()
 const postAfterAdd = posts.at(-1)
@@ -180,8 +179,12 @@ check('逐字清空后恢复完整旧名（不是最后一个字）', groupById(
 check('逐字清空的 payload 里也是完整旧名', posts.at(-1)?.groups?.[0]?.name === '完整组名', JSON.stringify(posts.at(-1)?.groups?.[0]?.name))
 
 // ---------- 位置开关与正文 ----------
-controller.editPosition(newId, 'user.prefix', { enabled: true })
+const beforePositionSave = posts.length
+controller.setPositionEnabled(newId, 'user.prefix', true)
+check('位置开关立即保存，不进入黄色等待', snapshot().status !== 'waiting', `${snapshot().status} / ${snapshot().message}`)
 check('打开位置落到快照', groupById(newId)?.positions['user.prefix']?.enabled === true, JSON.stringify(groupById(newId)?.positions['user.prefix']))
+await waitSave()
+check('位置开关的保存请求已发出', posts.length === beforePositionSave + 1, `posts ${beforePositionSave} → ${posts.length}`)
 controller.editPosition(newId, 'user.prefix', { text: '总是用中文回答' })
 check('位置正文落到快照', groupById(newId)?.positions['user.prefix']?.text === '总是用中文回答', JSON.stringify(groupById(newId)?.positions['user.prefix']))
 check('改一个位置不影响别的组/位置', groupById(newId)?.positions['user.suffix']?.text === '', JSON.stringify(groupById(newId)?.positions['user.suffix']))
@@ -202,13 +205,43 @@ controller.moveGroup(thirdId, -1)
 check('首组再上移不动（越界忽略）', same(snapshot().groups.map((group) => group.id), [thirdId, newId, secondId]), JSON.stringify(snapshot().groups.map((group) => group.id)))
 await waitSave()
 
-// ---------- debounce：连续编辑只提交一次 ----------
+// ---------- 离散操作（开关 / 排序 / 作用域 / 增删组）立即保存，不进入等待 ----------
+{
+  const beforeSwitch = posts.length
+  controller.setGroupEnabled(thirdId, false)
+  check('组开关立即保存，不进入黄色等待', snapshot().status !== 'waiting', `${snapshot().status} / ${snapshot().message}`)
+  await waitSave()
+  check('组开关的保存请求已发出', posts.length === beforeSwitch + 1 && posts.at(-1)?.groups?.find((group) => group.id === thirdId)?.enabled === false, `posts ${beforeSwitch} → ${posts.length}`)
+  controller.setGroupEnabled(thirdId, true)
+  await waitSave()
+
+  const beforeMove = posts.length
+  controller.moveGroup(thirdId, 1)
+  check('上下移立即保存，不进入黄色等待', snapshot().status !== 'waiting', `${snapshot().status} / ${snapshot().message}`)
+  await waitSave()
+  check('上下移的保存请求已发出', posts.length === beforeMove + 1, `posts ${beforeMove} → ${posts.length}`)
+  controller.moveGroup(thirdId, -1)
+  await waitSave()
+
+  const beforeModels = posts.length
+  controller.setGroupModels(thirdId, { all: false, list: ['x/y'] })
+  check('作用域勾选立即保存，不进入黄色等待', snapshot().status !== 'waiting', `${snapshot().status} / ${snapshot().message}`)
+  await waitSave()
+  check('作用域的保存请求已发出', posts.length === beforeModels + 1 && JSON.stringify(posts.at(-1)?.groups?.find((group) => group.id === thirdId)?.models) === JSON.stringify({ all: false, list: ['x/y'] }), `posts ${beforeModels} → ${posts.length}`)
+  controller.setGroupModels(thirdId, { all: true, list: [] })
+  await waitSave()
+}
+
+// ---------- debounce：连续文字编辑只提交一次 ----------
+const beforeEnable = posts.length
+controller.setPositionEnabled(thirdId, 'user.suffix', true)
+await waitSave()
+check('位置开关单独立即保存', posts.length === beforeEnable + 1, `posts ${beforeEnable} → ${posts.length}`)
 const beforeCoalesce = posts.length
-controller.editPosition(thirdId, 'user.suffix', { enabled: true })
 controller.editPosition(thirdId, 'user.suffix', { text: 'a' })
 controller.editPosition(thirdId, 'user.suffix', { text: 'ab' })
 await waitSave()
-check('连续编辑合并成一次保存', posts.length === beforeCoalesce + 1, `posts ${beforeCoalesce} → ${posts.length}`)
+check('连续文字编辑合并成一次保存', posts.length === beforeCoalesce + 1, `posts ${beforeCoalesce} → ${posts.length}`)
 check('合并后的 payload 是最后的值', posts.at(-1)?.groups?.find((group) => group.id === thirdId)?.positions['user.suffix']?.text === 'ab', JSON.stringify(posts.at(-1)?.groups?.find((group) => group.id === thirdId)?.positions['user.suffix']))
 
 // ---------- 组折叠：纯页面状态，不触发保存、不进 payload ----------

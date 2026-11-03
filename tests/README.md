@@ -18,7 +18,7 @@ npm run test:all    # 两类一起
 | `verify-template-fields.mjs` | **模板字段纯逻辑**：字段表、`{{字段}}` 替换规则（认不出/取不到值/名字不合规则一律原样保留）、agent 取值与组装期合并 |
 | `verify-groups.mjs` | **分组纯逻辑**：`emptyGroups()` 是 `[]`、`defaultGroup()` 形状、v1 `slots` 迁移成一个默认组（文本按顺序合并、位置开关、旧 persona 拆分）、`resolveSlot` 的组顺序/作用域/空跳过、`validateGroups` 允许空数组与未知位置进 `dropped` |
 | `verify-card-render.mjs` | 分组设置页的实际渲染：零组空状态、组卡片（开关、组名、作用域胶囊、顺序徽章、组折叠箭头、删除二次确认）、悬浮栏「全部折叠 / 全部展开」、位置行（关闭一行 / 打开 textarea）、模板字段下拉与插入、拼错字段轻提示、sticky 顶栏 |
-| `verify-group-editor.mjs` | **控制器级**回归：用真实 `Controller` 走「点/改 → 发布快照 → 重渲染」，验证新增组、改名、清空名保存恢复、组开关、位置开关、上下移、组折叠与全部折叠（不触发保存、不进 payload）、删除确认与删除、删光回零组、零组新建、保存时机（黄色等待状态 / flush 提交）的 payload |
+| `verify-group-editor.mjs` | **控制器级**回归：用真实 `Controller` 走「点/改 → 发布快照 → 重渲染」，验证新增组、改名、清空名保存恢复、组开关、位置开关、上下移、组折叠与全部折叠（不触发保存、不进 payload）、删除确认与删除、删光回零组、零组新建、保存时机（文字编辑黄色等待 / 失焦 flush；开关、排序、增删组、作用域立即保存）的 payload |
 | `verify-model-route.mjs` | **模型路由回归**：官方的模型选择投影（pending → lastUsed）压过「最近一次已提交请求」，切换模型后 A 的专属组不会跟进到 B；投影缺失时的回退链；system 中间锚点与 persona 头/尾改写都按同一条判据走 |
 | `read-session.mjs` | 真机探针：把会话日志（多帧 zstd）解成「路由 / 注入 / 用户消息」时间线，核对这轮算的哪个模型、实际注入了什么 |
 

@@ -357,7 +357,7 @@ function makeController() {
     return undefined
   }
   const api = { calls }
-  for (const name of ['addGroup', 'editGroup', 'editPosition', 'moveGroup', 'requestRemoveGroup', 'cancelRemoveGroup', 'confirmRemoveGroup', 'openGroupScope', 'toggleGroupPanel', 'toggleCollapseAll', 'flushSave', 'clearToast']) {
+  for (const name of ['addGroup', 'editGroup', 'editPosition', 'moveGroup', 'requestRemoveGroup', 'cancelRemoveGroup', 'confirmRemoveGroup', 'openGroupScope', 'toggleGroupPanel', 'toggleCollapseAll', 'flushSave', 'setGroupEnabled', 'setGroupModels', 'setPositionEnabled', 'clearToast']) {
     api[name] = record(name)
   }
   return api
@@ -541,8 +541,7 @@ const textareasOf = (node) => findAll(node, (item) => item.type === 'textarea')
   const groupSwitch = switchesOf(head)[0]
   check('组头有启用开关', groupSwitch !== undefined)
   groupSwitch?.props?.onChange?.(false)
-  check('点组开关调 editGroup(id, change)', api.calls.editGroup?.length === 1 && api.calls.editGroup[0][0] === 'g1' && typeof api.calls.editGroup[0][1] === 'function', JSON.stringify(api.calls.editGroup?.map((args) => [args[0], typeof args[1]])))
-  check('组开关的 change 函数把 enabled 改成 false', api.calls.editGroup?.[0]?.[1]?.({ ...group })?.enabled === false)
+  check('点组开关调 setGroupEnabled(id, false)', api.calls.setGroupEnabled?.length === 1 && api.calls.setGroupEnabled[0][0] === 'g1' && api.calls.setGroupEnabled[0][1] === false, JSON.stringify(api.calls.setGroupEnabled))
 
   const nameInput = byClass(head, 'dshpi-group-name')[0]
   nameInput?.props?.onChange?.({ target: { value: '新名字' } })
@@ -553,8 +552,8 @@ const textareasOf = (node) => findAll(node, (item) => item.type === 'textarea')
   const prefixRow = rowOf(card, 'user.prefix')
   const prefixSwitch = switchesOf(byClass(prefixRow, 'dshpi-position-head')[0] ?? prefixRow)[0]
   prefixSwitch?.props?.onChange?.(false)
-  const positionCall = api.calls.editPosition?.[0]
-  check('点位置开关调 editPosition(groupId, pointKey, patch)', positionCall?.[0] === 'g1' && positionCall?.[1] === 'user.prefix' && positionCall?.[2]?.enabled === false, JSON.stringify(positionCall))
+  const positionCall = api.calls.setPositionEnabled?.[0]
+  check('点位置开关调 setPositionEnabled(groupId, pointKey, false)', positionCall?.[0] === 'g1' && positionCall?.[1] === 'user.prefix' && positionCall?.[2] === false, JSON.stringify(positionCall))
 
   const textarea = textareasOf(prefixRow)[0]
   textarea?.props?.onChange?.({ target: { value: '改过的正文' } })
@@ -856,13 +855,11 @@ function openMenu(groups, patch = {}, hooks = {}) {
   const liveView = renderPage(live.tree)
   const liveModal = findAll(liveView, (item) => item.type === 'Modal')[0]
   boxesOfModal(liveModal).find((box) => box.props?.label === 'deepseek-flash')?.props?.onChange?.()
-  const modelCall = live.api.calls.editGroup?.[0]
-  const modelPatch = modelCall?.[1]?.({ ...liveGroup })
-  check('点某个模型会立即写回组作用域', modelCall?.[0] === 'g1' && JSON.stringify(modelPatch?.models) === JSON.stringify({ all: false, list: [FLASH] }), JSON.stringify(modelPatch?.models))
+  const modelCall = live.api.calls.setGroupModels?.[0]
+  check('点某个模型会立即写回组作用域', modelCall?.[0] === 'g1' && JSON.stringify(modelCall?.[1]) === JSON.stringify({ all: false, list: [FLASH] }), JSON.stringify(modelCall?.[1]))
   boxesOfModal(liveModal)[0]?.props?.onChange?.(true)
-  const allCall = live.api.calls.editGroup?.[1]
-  const allPatch = allCall?.[1]?.({ ...liveGroup })
-  check('点「全部模型」会写完 all 并保留勾选列表', allCall?.[0] === 'g1' && allPatch?.models?.all === true && Array.isArray(allPatch?.models?.list), JSON.stringify(allPatch?.models))
+  const allCall = live.api.calls.setGroupModels?.[1]
+  check('点「全部模型」会写完 all 并保留勾选列表', allCall?.[0] === 'g1' && allCall?.[1]?.all === true && Array.isArray(allCall?.[1]?.list), JSON.stringify(allCall?.[1]))
   footerButtonsOf(liveModal).find((button) => stringsOf(button).join('') === '完成')?.props?.onClick?.()
   check('点「完成」关掉弹层', live.api.calls.openGroupScope?.at(-1)?.[0] === undefined, JSON.stringify(live.api.calls.openGroupScope))
   const closingsBefore = live.api.calls.openGroupScope?.length ?? 0
