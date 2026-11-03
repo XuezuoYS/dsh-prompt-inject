@@ -1,5 +1,6 @@
 # dsh-prompt-inject —— DSH bundle patch
-# 只声明一条 host 条目：插件名与 package.json 的 name 一致，DSH 启动时按 bundle 层栈叠加。
+# 只声明一条 host 条目：id 是加载器里的条目名（profile 覆盖层按它定位，保持短名），
+# name 是包名，与 package.json 的 name 一致；@ 开头的值必须加引号，否则 YAML 解析失败。
 - insert:
-    - id: @xuezuoys/dsh-prompt-inject
-      name: @xuezuoys/dsh-prompt-inject
+    - id: dsh-prompt-inject
+      name: '@xuezuoys/dsh-prompt-inject'
