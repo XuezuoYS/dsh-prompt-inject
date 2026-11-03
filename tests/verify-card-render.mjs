@@ -357,7 +357,7 @@ function makeController() {
     return undefined
   }
   const api = { calls }
-  for (const name of ['addGroup', 'editGroup', 'editPosition', 'moveGroup', 'requestRemoveGroup', 'cancelRemoveGroup', 'confirmRemoveGroup', 'openGroupScope', 'clearToast']) {
+  for (const name of ['addGroup', 'editGroup', 'editPosition', 'moveGroup', 'requestRemoveGroup', 'cancelRemoveGroup', 'confirmRemoveGroup', 'openGroupScope', 'toggleGroupPanel', 'clearToast']) {
     api[name] = record(name)
   }
   return api
@@ -454,6 +454,35 @@ const textareasOf = (node) => findAll(node, (item) => item.type === 'textarea')
   const suffixRow = rowOf(groupCards(suffixRendered)[0] ?? null, 'user.suffix')
   check('关掉时用户后置词行不显示 notice', !stringsOf(rowOf(card, 'user.suffix') ?? null).join('|').includes('注入后不会自动清除'))
   check('打开后用户后置词行展示 notice', stringsOf(suffixRow ?? null).join('|').includes('注入后不会自动清除'), stringsOf(suffixRow ?? null).join('|').slice(0, 80))
+}
+
+// ---------- 组折叠：默认展开，收起后只剩头部一行 ----------
+{
+  /** 找组卡片上的折叠箭头（原生 button，不是 primitives Button）。 */
+  const foldToggleOf = (node) => findAll(node, (item) => hasClass(item, 'dshpi-group-toggle'))[0]
+  const group = makeGroup({ positions: { 'user.prefix': { enabled: true, text: '规则正文' } } })
+  const { rendered, api } = page([group])
+  const card = groupCards(rendered)[0]
+  check('组卡片默认展开（data-open=true）', card?.props?.['data-open'] === 'true', String(card?.props?.['data-open']))
+  const foldBtn = foldToggleOf(card)
+  check('展开时有折叠箭头（aria-expanded=true）', foldBtn !== undefined && foldBtn.props?.['aria-expanded'] === 'true', JSON.stringify(foldBtn?.props?.['aria-expanded']))
+  check('展开时渲染 8 个位置行', positionRows(card).length === 8, String(positionRows(card).length))
+  foldBtn?.props?.onClick?.()
+  check('点折叠箭头调 toggleGroupPanel(id)', api.calls.toggleGroupPanel?.length === 1 && api.calls.toggleGroupPanel[0][0] === 'g1', JSON.stringify(api.calls.toggleGroupPanel))
+
+  // 折叠由快照里的 collapsedGroups 驱动。
+  const collapsed = page([group], { collapsedGroups: { g1: true } })
+  const collapsedCard = groupCards(collapsed.rendered)[0]
+  check('折叠状态驱动渲染（data-open=false）', collapsedCard?.props?.['data-open'] === 'false')
+  check('折叠后不渲染位置行', positionRows(collapsedCard).length === 0, String(positionRows(collapsedCard).length))
+  check('折叠后头部仍在（组名 / 开关 / 删除都在）', byClass(collapsedCard, 'dshpi-group-name').length === 1 && switchesOf(collapsedCard).length === 1 && buttonByLabel(collapsedCard, '删除这个组') !== undefined)
+  const unfoldBtn = foldToggleOf(collapsedCard)
+  check('折叠时箭头文案换成「展开」（aria-expanded=false）', unfoldBtn !== undefined && unfoldBtn.props?.['aria-label'] === '展开这个组' && unfoldBtn.props?.['aria-expanded'] === 'false', JSON.stringify(unfoldBtn?.props?.['aria-label']))
+
+  // 两个组互不影响。
+  const two = page([makeGroup({ id: 'g1' }), makeGroup({ id: 'g2', name: '第二' })], { collapsedGroups: { g1: true } })
+  const twoCards = groupCards(two.rendered)
+  check('折叠状态按组各算各的', twoCards[0]?.props?.['data-open'] === 'false' && twoCards[1]?.props?.['data-open'] === 'true', `${twoCards[0]?.props?.['data-open']} / ${twoCards[1]?.props?.['data-open']}`)
 }
 
 // ---------- 组开关 / 组名 / 位置开关都接到控制器 ----------

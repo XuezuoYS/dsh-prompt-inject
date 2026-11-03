@@ -187,6 +187,17 @@ await waitSave()
 check('连续编辑合并成一次保存', posts.length === beforeCoalesce + 1, `posts ${beforeCoalesce} → ${posts.length}`)
 check('合并后的 payload 是最后的值', posts.at(-1)?.groups?.find((group) => group.id === thirdId)?.positions['user.suffix']?.text === 'ab', JSON.stringify(posts.at(-1)?.groups?.find((group) => group.id === thirdId)?.positions['user.suffix']))
 
+// ---------- 组折叠：纯页面状态，不触发保存、不进 payload ----------
+const beforeFold = posts.length
+controller.toggleGroupPanel(thirdId)
+check('折叠状态落到快照', snapshot().collapsedGroups?.[thirdId] === true, JSON.stringify(snapshot().collapsedGroups))
+controller.toggleGroupPanel(thirdId)
+check('再点一次展开', snapshot().collapsedGroups?.[thirdId] === false, JSON.stringify(snapshot().collapsedGroups))
+controller.toggleGroupPanel(thirdId)
+check('折叠状态按组各记各的', snapshot().collapsedGroups?.[newId] !== true && snapshot().collapsedGroups?.[thirdId] === true, JSON.stringify(snapshot().collapsedGroups))
+await waitSave()
+check('折叠不触发保存，payload 里也没有折叠状态', posts.length === beforeFold && !JSON.stringify(posts.at(-1) ?? {}).includes('collapsedGroups'), `posts ${beforeFold} → ${posts.length}`)
+
 // ---------- 删除：先确认，取消不删，确认才删 ----------
 controller.requestRemoveGroup(newId)
 check('点删除只挂起确认', snapshot().pendingRemoveGroupId === newId, String(snapshot().pendingRemoveGroupId))
