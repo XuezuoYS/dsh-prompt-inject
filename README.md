@@ -10,6 +10,8 @@
 - 位置文字里可以写 `{{model}}` 这类模板字段，发送时换成这次请求的真实值。
 - 配置文件存在本地，一切改动只影响你自己。
 
+[npm: @xuezuoys/dsh-prompt-inject](https://www.npmjs.com/package/@xuezuoys/dsh-prompt-inject)
+
 ## 安装
 
 用 dsh 自带的插件命令，从 npm 装进你要用的 profile：
