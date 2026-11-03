@@ -1,6 +1,6 @@
 {
   "name": "@xuezuoys/dsh-prompt-inject",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "这是一个适用于 Deepseek Harness 的插件，向用户提供 GUI 下分组的自定义且区分模型的发送 Prompt 注入功能。",
   "private": false,
   "publishConfig": {
