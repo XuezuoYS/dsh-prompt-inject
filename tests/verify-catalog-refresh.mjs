@@ -149,7 +149,7 @@ const push = (event) => {
 controller.editPosition('g1', 'user.prefix', { text: '正在打字…' })
 const edited = controller.getSnapshot()
 check('本地编辑落在 groups 上（还没提交）', edited.groups[0].positions['user.prefix'].text === '正在打字…', JSON.stringify(edited.groups[0].positions['user.prefix']))
-check('本地编辑把状态置为「保存中…」', edited.status === 'pending' && edited.message === '保存中…', `${edited.status} / ${edited.message}`)
+check('本地编辑把状态置为黄色「等待编辑结束后保存」', edited.status === 'waiting' && edited.message === '等待编辑结束后保存', `${edited.status} / ${edited.message}`)
 
 const requestsBefore = requests.filter((item) => item.endsWith('/catalog')).length
 push('llm/adapters-updated')
@@ -160,7 +160,7 @@ check('收到推送后重拉了目录', requests.filter((item) => item.endsWith(
 check('目录换成新的（新增的模型立刻出现在弹层里）', refreshed.catalog.providers[0].models.length === 2, JSON.stringify(refreshed.catalog.providers[0].models))
 check('重拉不动分组：用户本地那份编辑还在', refreshed.groups[0].positions['user.prefix'].text === '正在打字…', JSON.stringify(refreshed.groups[0].positions['user.prefix']))
 check('重拉不动 revision（乐观锁要用的还是这一版）', refreshed.revision === 3, String(refreshed.revision))
-check('重拉不动保存状态（还是「保存中…」）', refreshed.status === 'pending' && refreshed.message === '保存中…', `${refreshed.status} / ${refreshed.message}`)
+check('重拉不动保存状态（还是「等待编辑结束后保存」）', refreshed.status === 'waiting' && refreshed.message === '等待编辑结束后保存', `${refreshed.status} / ${refreshed.message}`)
 
 // ---------- 连改几下：合并成一次请求 ----------
 const beforeBurst = requests.filter((item) => item.endsWith('/catalog')).length

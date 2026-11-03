@@ -1,10 +1,11 @@
 // 控制器级回归：真实 `Controller`（经槽位注入面拿到）走一遍分组编辑链路。
 //
-// 为什么要有这一层：视图只是把点击翻成方法调用，真正的「乐观更新 → debounce → 提交 → 回滚」
+// 为什么要有这一层：视图只是把点击翻成方法调用，真正的「乐观更新 → 等待编辑结束 → 提交 → 回滚」
 // 都在控制器里。这里不渲染页面、不碰 DOM，只按真实链路点方法，然后看快照与 POST 出去的内容。
 //
 // 覆盖：新增组、改名、清空名后保存时恢复、位置开关 / 正文、上下移、删除二次确认与真删、
 // 删光回零组、零组再新建、提交 payload 是 `{ revision, groups }`、409 回滚。
+// 保存时机：停止输入 20 秒，或 blur（flushSave）；测试用 flushSave 代替真实等待。
 //
 // 用法：node tests/verify-group-editor.mjs
 import { readFile } from 'node:fs/promises'
@@ -19,8 +20,7 @@ const check = (name, ok, detail) => {
 const POINT_KEYS = ['user.prefix', 'user.suffix', 'system.personaHead', 'system.beforeTools', 'system.afterTools', 'system.middle', 'system.personaTail', 'system.last']
 /** 深比较。 */
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
-/** 等一拍（debounce 是 500ms）。 */
-const waitSave = () => new Promise((resolve) => setTimeout(resolve, 700))
+/** 等一拍（等 fetch 落地）。 */
 const waitTick = () => new Promise((resolve) => setTimeout(resolve, 30))
 
 /** 造一份完整位置表。 */
@@ -115,6 +115,12 @@ if (controller === undefined) {
 }
 const snapshot = () => controller.getSnapshot()
 const groupById = (id) => snapshot().groups.find((group) => group.id === id)
+/** 模拟「编辑结束」（blur）：flush 待保存内容，等一拍让 fetch 落地。 */
+const waitSave = async () => {
+  controller.flushSave()
+  await waitTick()
+  await waitTick()
+}
 
 // ---------- 首次读取 ----------
 await waitTick()
@@ -122,6 +128,8 @@ check('首次读取完成：revision 落位', snapshot().revision === 3, String(
 check('新安装是零组', Array.isArray(snapshot().groups) && snapshot().groups.length === 0, JSON.stringify(snapshot().groups))
 check('读配置后状态是「已保存」', snapshot().status === 'saved', String(snapshot().status))
 check('lastNames 是控制器内部状态，不进快照', !Object.hasOwn(snapshot(), 'lastNames') && !JSON.stringify(snapshot()).includes('Map'), JSON.stringify(Object.keys(snapshot())))
+controller.flushSave()
+check('没有待保存内容时 flush 是空操作', posts.length === 0, String(posts.length))
 
 // ---------- 新增组 ----------
 const newId = controller.addGroup()
@@ -134,6 +142,8 @@ check('新组默认对全部模型生效', same(created.models, { all: true, lis
 check('新组带完整 8 个位置键', same(Object.keys(created.positions), POINT_KEYS), JSON.stringify(Object.keys(created.positions)))
 check('新组的位置默认关且空', POINT_KEYS.every((key) => same(created.positions[key], { enabled: false, text: '' })), JSON.stringify(created.positions))
 check('新组 id 与返回值一致', created.id === newId, `${created.id} / ${newId}`)
+check('新增后进入黄色等待状态', snapshot().status === 'waiting' && snapshot().message === '等待编辑结束后保存', `${snapshot().status} / ${snapshot().message}`)
+check('等待期间还没发保存请求', posts.length === 0, String(posts.length))
 
 await waitSave()
 const postAfterAdd = posts.at(-1)
@@ -146,6 +156,7 @@ controller.editGroup(newId, (group) => ({ ...group, name: '工作' }))
 check('改名落到快照', groupById(newId)?.name === '工作', String(groupById(newId)?.name))
 await waitSave()
 check('改名后排了保存，payload 里是新名字', posts.at(-1)?.groups?.[0]?.name === '工作', String(posts.at(-1)?.groups?.[0]?.name))
+check('保存后状态是「已保存」', snapshot().status === 'saved' && snapshot().message === '已保存', `${snapshot().status} / ${snapshot().message}`)
 
 // ---------- 清空组名：保存时恢复上一个非空名 ----------
 controller.editGroup(newId, (group) => ({ ...group, name: '' }))
@@ -154,6 +165,19 @@ await waitSave()
 const payloadAfterClear = posts.at(-1)
 check('保存时把空组名恢复成上一个非空名（快照）', groupById(newId)?.name === '工作', JSON.stringify(groupById(newId)?.name))
 check('保存时把空组名恢复成上一个非空名（payload）', payloadAfterClear?.groups?.[0]?.name === '工作', JSON.stringify(payloadAfterClear?.groups?.[0]?.name))
+
+// ---------- 回归：逐字删除后恢复的是完整旧名，不是最后一个字 ----------
+controller.editGroup(newId, (group) => ({ ...group, name: '完整组名' }))
+await waitSave()
+check('完整新名保存成功', groupById(newId)?.name === '完整组名', String(groupById(newId)?.name))
+// 模拟退格逐字删除：每一步都是非空中间值，不应该覆盖「上一个完整名字」的记忆。
+for (const partial of ['完整组', '完整', '完', '']) {
+  controller.editGroup(newId, (group) => ({ ...group, name: partial }))
+}
+check('逐字清空过程中输入框保持为空', groupById(newId)?.name === '', JSON.stringify(groupById(newId)?.name))
+await waitSave()
+check('逐字清空后恢复完整旧名（不是最后一个字）', groupById(newId)?.name === '完整组名', JSON.stringify(groupById(newId)?.name))
+check('逐字清空的 payload 里也是完整旧名', posts.at(-1)?.groups?.[0]?.name === '完整组名', JSON.stringify(posts.at(-1)?.groups?.[0]?.name))
 
 // ---------- 位置开关与正文 ----------
 controller.editPosition(newId, 'user.prefix', { enabled: true })
@@ -223,7 +247,7 @@ controller.requestRemoveGroup(newId)
 controller.confirmRemoveGroup()
 check('确认后才真正删掉组', groupById(newId) === undefined, JSON.stringify(snapshot().groups.map((group) => group.id)))
 check('删除后确认状态清掉', snapshot().pendingRemoveGroupId === undefined, String(snapshot().pendingRemoveGroupId))
-check('删除后给一条提示', snapshot().toast?.text === '已删除组「工作」', JSON.stringify(snapshot().toast?.text))
+check('删除后给一条提示', snapshot().toast?.text === '已删除组「完整组名」', JSON.stringify(snapshot().toast?.text))
 check('分组版删除没有撤销动作', typeof snapshot().toast?.undo !== 'function', JSON.stringify(Object.keys(snapshot().toast ?? {})))
 controller.clearToast()
 check('clearToast 收掉提示', snapshot().toast === undefined)

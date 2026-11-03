@@ -357,7 +357,7 @@ function makeController() {
     return undefined
   }
   const api = { calls }
-  for (const name of ['addGroup', 'editGroup', 'editPosition', 'moveGroup', 'requestRemoveGroup', 'cancelRemoveGroup', 'confirmRemoveGroup', 'openGroupScope', 'toggleGroupPanel', 'toggleCollapseAll', 'clearToast']) {
+  for (const name of ['addGroup', 'editGroup', 'editPosition', 'moveGroup', 'requestRemoveGroup', 'cancelRemoveGroup', 'confirmRemoveGroup', 'openGroupScope', 'toggleGroupPanel', 'toggleCollapseAll', 'flushSave', 'clearToast']) {
     api[name] = record(name)
   }
   return api
@@ -507,6 +507,29 @@ const textareasOf = (node) => findAll(node, (item) => item.type === 'textarea')
   // 零组时不渲染这个按钮。
   const noneIn = page([])
   check('零组时不渲染「全部折叠」按钮', buttonByLabel(barOf(noneIn.rendered), '全部折叠') === undefined && buttonByLabel(barOf(noneIn.rendered), '全部展开') === undefined)
+}
+
+// ---------- 保存时机：等待状态显示 + 输入框 blur 触发 flushSave ----------
+{
+  const group = makeGroup({ positions: { 'user.prefix': { enabled: true, text: '正文' } } })
+  // 状态栏渲染 waiting 状态（黄点 + 提示文案）。
+  const waiting = page([group], { status: 'waiting', message: '等待编辑结束后保存' })
+  const bar = byClass(waiting.rendered, 'dshpi-bar')[0]
+  const dot = byClass(bar, 'dshpi-dot')[0]
+  check('等待状态的状态点是黄色 waiting', dot?.props?.['data-state'] === 'waiting', String(dot?.props?.['data-state']))
+  check('等待状态的状态栏给「等待编辑结束后保存」提示', stringsOf(bar).join('|').includes('等待编辑结束后保存'), stringsOf(bar).join('|'))
+  check('等待状态提示文字用黄色样式', byClass(bar, 'dshpi-waiting-text').length === 1, String(byClass(bar, 'dshpi-waiting-text').length))
+
+  // 位置输入框 blur → flushSave（= 移开焦点立即保存）。
+  const { rendered, api } = page([group])
+  const textarea = textareasOf(rendered)[0]
+  textarea?.props?.onBlur?.({ target: textarea })
+  check('位置输入框 blur 调 flushSave()', api.calls.flushSave?.length === 1, JSON.stringify(api.calls.flushSave))
+
+  // 组名输入框 blur → flushSave。
+  const nameInput = byClass(rendered, 'dshpi-group-name')[0]
+  nameInput?.props?.onBlur?.()
+  check('组名输入框 blur 也调 flushSave()', api.calls.flushSave?.length === 2, JSON.stringify(api.calls.flushSave?.length))
 }
 
 // ---------- 组开关 / 组名 / 位置开关都接到控制器 ----------
