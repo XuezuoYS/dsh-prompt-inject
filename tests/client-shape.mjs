@@ -23,7 +23,7 @@ if (typeof registration?.factory !== 'function') problems.push('registration mus
 
 const required = new Set()
 const provided = new Map([
-  ['react', { useState: (value) => [value, () => {}], useMemo: (fn) => fn(), useRef: (value) => ({ current: value }), createElement: () => null }],
+  ['react', { useState: (value) => [value, () => {}], useMemo: (fn) => fn(), useRef: (value) => ({ current: value }), useEffect: () => {}, createElement: () => null }],
   ['react/jsx-runtime', { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }],
   [
     '@deepseek-ai/dsh-client-ui-primitives',

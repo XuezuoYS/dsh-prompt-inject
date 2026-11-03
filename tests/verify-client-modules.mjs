@@ -59,7 +59,7 @@ check('官方 bundle 导出 createClientModuleSystem', typeof bootstrapExports.c
 const jsx = (type, props) => ({ type, props })
 const primitives = new Proxy({}, { get: (_target, key) => (typeof key === 'string' ? function Stub() {} : undefined) })
 const staticModules = {
-  react: { useRef: (value) => ({ current: value }), useState: (value) => [value, () => {}], useMemo: (factory) => factory(), Fragment: 'Fragment' },
+  react: { useRef: (value) => ({ current: value }), useState: (value) => [value, () => {}], useMemo: (factory) => factory(), useEffect: () => {}, Fragment: 'Fragment' },
   'react/jsx-runtime': { jsx, jsxs: jsx },
   '@deepseek-ai/dsh-client-ui-primitives': primitives,
 }

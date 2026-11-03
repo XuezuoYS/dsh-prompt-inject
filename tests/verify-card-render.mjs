@@ -14,8 +14,29 @@ const check = (name, ok, detail) => {
 }
 
 // ---------- 最小 React / jsx 替身 ----------
+// 有状态版：顶栏「模板字段」下拉靠 useState 开合，探针要能手把手点开它再点字段。
+// 槽位按下标分配（同 React 的 hook 顺序）：树里不止它一个 useState（模型弹层还有搜索词），
+// 单槽会互相覆盖；stateSlots 跨渲染保留（开合状态要活到下一次渲染），stateIndex 每趟渲染清零。
+let stateSlots = []
+let stateIndex = 0
+let effectSlot
 const react = {
-  useState: (initial) => [initial, () => {}],
+  useState: (initial) => {
+    const index = stateIndex++
+    if (stateSlots[index] === undefined) stateSlots[index] = [typeof initial === 'function' ? initial() : initial]
+    return [
+      stateSlots[index][0],
+      (next) => {
+        stateSlots[index][0] = typeof next === 'function' ? next(stateSlots[index][0]) : next
+      },
+    ]
+  },
+  // 每个渲染先清理上一个 effect 再重跑：够探针模拟「Escape / 点外面收菜单」。
+  useEffect: (body) => {
+    if (effectSlot?.cleanup !== undefined) effectSlot.cleanup()
+    const cleanup = body()
+    effectSlot = { cleanup: typeof cleanup === 'function' ? cleanup : undefined }
+  },
   useMemo: (factory) => factory(),
   // 真的 ref 在无 DOM 环境里不会被挂上元素，客户端半的「插到光标处」会走「插到最后一条规则」的兜底。
   useRef: (initial) => ({ current: initial }),
@@ -158,9 +179,46 @@ const exports = registrations[0].factory((specifier) => {
   throw new Error(`unexpected require: ${specifier}`)
 })
 
+// ---------- 顶栏下拉菜单的探针场景辅助 ----------
+/** document 监听登记表：effect 挂的「点外面 / Escape 收菜单」从这里取。 */
+const docListeners = new Map()
+
+/** 每个下拉菜单场景前重置 state/effect 替身与 document 监听。 */
+function resetMenuProbe() {
+  stateSlots = []
+  stateIndex = 0
+  if (effectSlot?.cleanup !== undefined) effectSlot.cleanup()
+  effectSlot = undefined
+  docListeners.clear()
+}
+
+/** 渲染一整页：每趟把 hook 下标清零（开合状态留在 stateSlots 里跨渲染用）。 */
+function renderPage(tree) {
+  stateIndex = 0
+  return render(tree)
+}
+
+/** 找页面里的下拉触发钮 / 面板 / 菜单项。 */
+const triggerOf = (node) => findAll(node, (item) => item.props?.className === 'dshpi-fieldmenu-trigger')
+const popOf = (node) => findAll(node, (item) => typeof item.props?.className === 'string' && item.props.className.split(' ').includes('dshpi-fieldmenu-pop'))
+const itemsOf = (node) => findAll(node, (item) => typeof item.props?.className === 'string' && item.props.className.split(' ').includes('dshpi-fieldmenu-item'))
+
+/** 渲染「用户前置词里有一条规则」的页面（下拉菜单场景的公共输入）。 */
+const menuSlots = () => slotsWithRules([rule('r1', '前缀', { all: true, list: [] })])
+
 const registers = []
 globalThis.fetch = async () => ({ ok: false, status: 0, json: async () => ({}) })
-globalThis.document = { createElement: () => ({ dataset: {}, remove() {} }), head: { appendChild() {} } }
+globalThis.document = {
+  createElement: () => ({ dataset: {}, remove() {} }),
+  head: { appendChild() {} },
+  addEventListener: (name, listener) => {
+    if (!docListeners.has(name)) docListeners.set(name, new Set())
+    docListeners.get(name).add(listener)
+  },
+  removeEventListener: (name, listener) => {
+    docListeners.get(name)?.delete(listener)
+  },
+}
 exports.apply({
   effect: (callback) => {
     const result = callback()
@@ -420,7 +478,7 @@ check('没有提示时不会渲染提示条', primitives.lastToastProps === unde
 const withRules = slotsWithRules([rule('r1', '一条', { all: true, list: [] })])
 const toggles = []
 const toggleTree = settingsTree(withRules, {}, { togglePanel: (pointKey, currentOpen) => toggles.push({ pointKey, currentOpen }) })
-const heads = findAll(render(toggleTree), (node) => node.props?.['aria-expanded'] !== undefined)
+const heads = findAll(render(toggleTree), (node) => node.props?.className === 'dshpi-disclosure-head')
 check('8 个注入点都有折叠头', heads.length === 8, String(heads.length))
 check('有规则的注入点默认展开', heads.find((node) => node.props['aria-expanded'] === 'true') !== undefined)
 const collapsible = heads.filter((node) => node.props['aria-expanded'] === 'true')[0]
@@ -458,49 +516,101 @@ check('展开空注入点时给一句引导', emptyStrings.includes('还没有�
 const collapsed = stringsOf(render(settingsTree(baseSlots()))).join('|')
 check('默认收起时空注入点标「还没有规则」', collapsed.includes('还没有规则'))
 
-// ---------- 模板字段提示条 ----------
-/** 找出页面里所有字段徽章。 */
-const chipsOf = (node) => findAll(node, (item) => typeof item.props?.className === 'string' && item.props.className === 'dshpi-field-chip')
+// ---------- 顶栏模板字段下拉菜单 ----------
+// 顶栏悬浮：样式源码里 dshpi-bar 是 sticky（保持在流内第一位，内容区块天然避让它）。
+const barCss = source.match(/\.dshpi-bar\{[^}]*\}/)?.[0] ?? ''
+check('顶栏样式是悬浮的（position:sticky）', barCss.includes('position:sticky'), barCss)
 
-const chipTree = render(settingsTree(slotsWithRules([rule('r1', '前缀', { all: true, list: [] })])))
-const chips = chipsOf(chipTree)
-check('展开的注入点里给出全部模板字段徽章', chips.length === TEMPLATE_FIELDS.length, chips.map((chip) => chip.props?.children).join(' | '))
-check('徽章上带字段名与短标签', chips.map((chip) => chip.props?.children).join('|') === '{{model}} 模型名|{{provider}} 提供方|{{cwd}} 工作目录', chips.map((chip) => chip.props?.children).join('|'))
-const chipStrings = stringsOf(chipTree).join('|')
-check('提示条给出字段注释', TEMPLATE_FIELDS.every((field) => chipStrings.includes(`{{${field.name}}} ${field.note}`)), chipStrings.slice(0, 200))
-check('徽章可点，且带插入说明', chips.every((chip) => chip.type === 'button' && typeof chip.props?.onClick === 'function' && String(chip.props?.title).includes('插到光标处')))
-
-// 点徽章：没有输入框可参考（无 DOM）时插到该注入点最后一条规则末尾。
-const chipEdits = []
-const clickTree = render(
-  settingsTree(slotsWithRules([rule('r1', '前缀', { all: true, list: [] })]), {}, {
-    editRules: (pointKey, change) => chipEdits.push({ pointKey, rules: change([rule('r1', '前缀', { all: true, list: [] })]) }),
-  }),
-)
-chipsOf(clickTree)[0]?.props?.onClick?.()
+resetMenuProbe()
+const menuTree = renderPage(settingsTree(menuSlots()))
+const trigger = triggerOf(menuTree)[0]
+check('顶栏左侧有「模板字段」下拉触发钮', trigger !== undefined && trigger.type === 'button')
 check(
-  '点 {{model}} 徽章把字段插进规则文本',
+  '触发钮带 aria 状态与插入说明，默认收起',
+  trigger?.props?.['aria-haspopup'] === 'true' && trigger?.props?.['aria-expanded'] === 'false' && String(trigger?.props?.title).includes('光标'),
+  JSON.stringify({ haspopup: trigger?.props?.['aria-haspopup'], expanded: trigger?.props?.['aria-expanded'] }),
+)
+check('菜单默认关闭（不渲染面板）', popOf(menuTree).length === 0)
+
+// 打开：点触发钮 → 面板列出全部字段（徽章 + 标签 + 注释）+ 底部行为提示。
+trigger?.props?.onClick?.()
+const openTree = renderPage(settingsTree(menuSlots()))
+const openTrigger = triggerOf(openTree)[0]
+check('点触发钮后面板打开（aria-expanded 翻真）', openTrigger?.props?.['aria-expanded'] === 'true')
+const pops = popOf(openTree)
+const items = itemsOf(openTree)
+check('面板列出全部模板字段', items.length === TEMPLATE_FIELDS.length, items.map((item) => item.props?.['aria-label']).join(' | '))
+check(
+  '每项带 {{字段}} 徽章、标签与注释',
+  pops.length === 1 &&
+    TEMPLATE_FIELDS.every((field) => {
+      const item = items.find((node) => node.props?.['aria-label'] === `插入模板字段 ${field.name}`)
+      if (item === undefined) return false
+      const text = stringsOf(item).join('|')
+      return text.includes(`{{${field.name}}}`) && text.includes(field.label) && text.includes(field.note)
+    }),
+  stringsOf(pops[0]).slice(0, 200).join('|'),
+)
+check('面板底部给插入行为提示', stringsOf(pops[0]).join('|').includes('光标处'))
+
+// 不抢焦点：触发钮与每个菜单项都在 mousedown 上 preventDefault。
+let triggerPrevented = false
+openTrigger?.props?.onMouseDown?.({ preventDefault: () => { triggerPrevented = true } })
+check(
+  '触发钮与菜单项都拦 mousedown（打开/点选不抢输入框焦点）',
+  triggerPrevented === true &&
+    items.every((item) => {
+      if (typeof item.props?.onMouseDown !== 'function') return false
+      let prevented = false
+      item.props.onMouseDown({ preventDefault: () => { prevented = true } })
+      return prevented
+    }),
+)
+check('打开时挂了 document 的 mousedown / keydown 监听', docListeners.has('mousedown') && docListeners.has('keydown'), JSON.stringify([...docListeners.keys()]))
+
+// Escape 收菜单。
+for (const listener of docListeners.get('keydown') ?? []) listener({ key: 'Escape' })
+check('按 Escape 后面板收起来', popOf(renderPage(settingsTree(menuSlots()))).length === 0)
+
+// 点面板外面（mousedown）也收。
+triggerOf(renderPage(settingsTree(menuSlots())))[0]?.props?.onClick?.()
+renderPage(settingsTree(menuSlots()))
+for (const listener of docListeners.get('mousedown') ?? []) listener({ target: {} })
+check('点面板外面（mousedown）面板收起来', popOf(renderPage(settingsTree(menuSlots()))).length === 0)
+
+// 点 {{model}} 项：无 DOM 可走「第一个有规则的注入点的末条」兜底 → 追加到文本末尾。
+resetMenuProbe()
+const chipEdits = []
+const clickHooks = { editRules: (pointKey, change) => chipEdits.push({ pointKey, rules: change([rule('r1', '前缀', { all: true, list: [] })]) }) }
+triggerOf(renderPage(settingsTree(menuSlots(), {}, clickHooks)))[0]?.props?.onClick?.()
+itemsOf(renderPage(settingsTree(menuSlots(), {}, clickHooks)))[0]?.props?.onClick?.()
+check(
+  '点 {{model}} 项把字段插进规则文本',
   chipEdits.length === 1 && chipEdits[0].pointKey === 'user.prefix' && chipEdits[0].rules[0].text === '前缀{{model}}',
   JSON.stringify(chipEdits.map((edit) => edit.rules[0].text)),
 )
 
-// 一条规则都没有时点徽章：直接新增一条，内容就是那个字段。
+// 一条规则都没有时点字段：直接新建一条，内容就是那个字段。
+resetMenuProbe()
 const chipEditsEmpty = []
-const emptyTree = render(
-  settingsTree(baseSlots(), { panels: { 'user.prefix': true } }, {
-    editRules: (pointKey, change) => chipEditsEmpty.push({ pointKey, rules: change([]) }),
-  }),
-)
-chipsOf(emptyTree)[2]?.props?.onClick?.()
+const emptyHooks = { editRules: (pointKey, change) => chipEditsEmpty.push({ pointKey, rules: change([]) }) }
+triggerOf(renderPage(settingsTree(baseSlots(), { panels: { 'user.prefix': true } }, emptyHooks)))[0]?.props?.onClick?.()
+itemsOf(renderPage(settingsTree(baseSlots(), { panels: { 'user.prefix': true } }, emptyHooks)))[2]?.props?.onClick?.()
 check(
-  '没有规则时点 {{cwd}} 徽章会新建一条规则',
-  chipEditsEmpty.length === 1 && chipEditsEmpty[0].rules.length === 1 && chipEditsEmpty[0].rules[0].text === '{{cwd}}',
+  '没有规则时点 {{cwd}} 项会新建一条规则',
+  chipEditsEmpty.length === 1 && chipEditsEmpty[0].pointKey === 'user.prefix' && chipEditsEmpty[0].rules.length === 1 && chipEditsEmpty[0].rules[0].text === '{{cwd}}',
   JSON.stringify(chipEditsEmpty.map((edit) => edit.rules.map((item) => item.text))),
 )
 
-// 老 host 不下发字段表时：没有徽章，页面照常。
-const noFields = render(settingsTree(slotsWithRules([rule('r1', '前缀', { all: true, list: [] })]), { fields: [] }))
-check('host 没给字段表时不渲染提示条（版本错位也不炸）', chipsOf(noFields).length === 0)
+// 老 host 不下发字段表时：没有触发钮，页面照常。
+resetMenuProbe()
+const noFields = renderPage(settingsTree(menuSlots(), { fields: [] }))
+check('host 没给字段表时不渲染下拉（版本错位也不炸）', triggerOf(noFields).length === 0)
+
+// 每节上置提示条已删：整棵树里不再有字段徽章条。
+const goneClasses = classNamesOf(renderPage(settingsTree(menuSlots()))).join('|')
+check('各注入点里的上置字段提示条已删除', !goneClasses.includes('dshpi-fields') && !goneClasses.includes('dshpi-field-chip'), goneClasses.slice(0, 200))
+resetMenuProbe()
 
 // ---------- 未知字段的轻提示 ----------
 const unknownCard = cardsOf(render(settingsTree(slotsWithRules([rule('r1', '看 {{modle}} 和 {{中文}}', { all: true, list: [] })]))))[0]

@@ -29,7 +29,7 @@ const LABELS = {
 }
 
 // ---------- 最小 React / jsx 替身 ----------
-const react = { useState: (initial) => [initial, () => {}], useMemo: (factory) => factory(), useRef: (initial) => ({ current: initial }), createElement: () => null }
+const react = { useState: (initial) => [initial, () => {}], useMemo: (factory) => factory(), useRef: (initial) => ({ current: initial }), useEffect: (body) => body(), createElement: () => null }
 const jsxRuntime = { jsx: (type, props) => ({ type, props: props ?? {} }), jsxs: (type, props) => ({ type, props: props ?? {} }) }
 
 function render(node, keep = () => false) {

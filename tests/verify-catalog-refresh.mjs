@@ -19,7 +19,7 @@ const check = (name, ok, detail) => {
 const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // ---------- 最小 React / jsx 替身（只要 apply 能挂上就行，页面渲染不是这里的重点） ----------
-const react = { useState: (initial) => [initial, () => {}], useMemo: (factory) => factory(), useRef: (initial) => ({ current: initial }) }
+const react = { useState: (initial) => [initial, () => {}], useMemo: (factory) => factory(), useRef: (initial) => ({ current: initial }), useEffect: () => {} }
 const jsxRuntime = { jsx: (type, props) => ({ type, props: props ?? {} }), jsxs: (type, props) => ({ type, props: props ?? {} }) }
 
 // ---------- 加载客户端半 ----------
