@@ -2,7 +2,7 @@
   "name": "dsh-prompt-inject",
   "version": "0.2.1",
   "private": true,
-  "description": "按注入点与模型作用域自定义发送时的前后缀与 system 注入",
+  "description": "这是一个适用于 Deepseek Harness 的插件，向用户提供 GUI 下分组的自定义且区分模型的发送 Prompt 注入功能。",
   "type": "module",
   "main": "lib/index.js",
   "icon": "./icon.svg",

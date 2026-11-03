@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "dsh-prompt-inject",
-    "description": "在设置页按注入点与模型配置发送前后缀与 system 注入。"
+    "title": "DSH 提示词注入工具",
+    "description": "向用户提供 GUI 下分组的自定义且区分模型的发送 Prompt 注入功能"
   }
 }

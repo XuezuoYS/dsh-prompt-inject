@@ -1,6 +1,6 @@
 # dsh-prompt-inject
 
-这是一个适用于 Deepseek Harness（以下简称 DSH / dsh ）的插件，向用户提供 GUI 下自定义且区分模型的发送 Prompt 注入功能。
+这是一个适用于 Deepseek Harness（以下简称 DSH / dsh ）的插件，向用户提供 GUI 下分组的自定义且区分模型的发送 Prompt 注入功能。
 
 本项目目标兼容版本为 dsh 的最新 rc 版本
 
