@@ -1,7 +1,6 @@
 {
-  "name": "dsh-prompt-inject",
+  "name": "@xuezuoys/dsh-prompt-inject",
   "version": "0.2.1",
-  "private": true,
   "description": "这是一个适用于 Deepseek Harness 的插件，向用户提供 GUI 下分组的自定义且区分模型的发送 Prompt 注入功能。",
   "type": "module",
   "main": "lib/index.js",
@@ -34,7 +33,7 @@
     "dsh": ">=0.2.1-rc.2 <0.3.0"
   },
   "meta": {
-    "title": "dsh-prompt-inject",
+    "title": "@xuezuoys/dsh-prompt-inject",
     "description": "在设置页按注入点与模型自定义发送前后缀和 system 注入"
   },
   "peerDependencies": {
@@ -46,6 +45,18 @@
     "@deepseek-ai/dsh-session": "0.2.1-rc.2",
     "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.2"
   },
+  "author": "xuezuoys",
+  "homepage": "https://github.com/XuezuoYS/dsh-prompt-inject",
+  "repository": "XuezuoYS/dsh-prompt-inject",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "plugin",
+    "prompt",
+    "prompt-injection",
+    "system-prompt"
+  ],
   "files": [
     "lib",
     "locale",

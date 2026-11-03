@@ -18,7 +18,7 @@ const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf
 const problems = []
 if (registrations.length !== 1) problems.push(`expected exactly 1 registration, got ${registrations.length}`)
 const registration = registrations[0]
-if (registration?.id !== 'dsh-prompt-inject') problems.push(`registration id must be the package name, got ${String(registration?.id)}`)
+if (registration?.id !== '@xuezuoys/dsh-prompt-inject') problems.push(`registration id must be the package name, got ${String(registration?.id)}`)
 if (typeof registration?.factory !== 'function') problems.push('registration must carry a factory')
 
 const required = new Set()

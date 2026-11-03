@@ -1,4 +1,4 @@
-# dsh-prompt-inject
+# @xuezuoys/dsh-prompt-inject
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（下称 dsh）的一个插件：在设置页里，按**注入点**和**模型**配置要注入的提示词。
 
@@ -11,10 +11,10 @@
 
 ## 安装
 
-用 dsh 自带的插件命令，从 GitHub 装进你要用的 profile：
+用 dsh 自带的插件命令，从 npm 装进你要用的 profile：
 
 ```sh
-dsh plugin --profile web add github:XuezuoYS/dsh-prompt-inject
+dsh plugin --profile web add @xuezuoys/dsh-prompt-inject
 ```
 
 `--profile` 填你平时启动的那个 profile：命令行跑 Web UI 就是 `web`，桌面版是 `desktop`。第一次用某个 profile 时，这条命令会先把它初始化出来。新装的组合包默认就是启用的，不用再开。
@@ -25,18 +25,24 @@ dsh plugin --profile web add github:XuezuoYS/dsh-prompt-inject
 dsh plugin --profile web add github:XuezuoYS/dsh-prompt-inject#<sha>
 ```
 
+也可以直接从 GitHub 装（等价于 npm 版的开发分支）：
+
+```sh
+dsh plugin --profile web add github:XuezuoYS/dsh-prompt-inject
+```
+
 本插件是纯 JS 的手写包，没有 `prepare`、`install` 之类的构建脚本，所以官方文档里 git 安装那道「授权构建」的坎在这里不存在（pnpm 10 只会拦带构建脚本的包）。
 
 装完如果 dsh 正在跑，命令会告诉你是立刻生效还是要重启；重启一次 dsh 总是安全的。想确认装上了，可以只看配置层而不启动：
 
 ```sh
-dsh --profile web --dump-config   # 应该能看到一行 "# == dsh-prompt-inject"
+dsh --profile web --dump-config   # 应该能看到一行 "# == @xuezuoys/dsh-prompt-inject"
 ```
 
 卸载会同时移除依赖和它贡献的配置层：
 
 ```sh
-dsh plugin --profile web remove dsh-prompt-inject
+dsh plugin --profile web remove @xuezuoys/dsh-prompt-inject
 ```
 
 卸载不动你的规则文件，重装回来配置还在。

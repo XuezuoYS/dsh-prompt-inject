@@ -210,7 +210,7 @@ check('老 host 回 404 时静静留着旧目录（不抛错、不改状态）',
     return { ok: true, status: 200, json: async () => STATE }
   }
 
-  const fiber = await root.plugin({ name: 'dsh-prompt-inject', inject: exports.inject, apply: exports.apply })
+  const fiber = await root.plugin({ name: '@xuezuoys/dsh-prompt-inject', inject: exports.inject, apply: exports.apply })
   check('remote 还没挂时：设置页照样注册了', lateRegisters.length === 1)
   check('remote 还没挂时：什么都没订阅', pushed.length === 0)
 

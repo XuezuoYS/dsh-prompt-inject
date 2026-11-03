@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "dsh-prompt-inject",
+    "title": "@xuezuoys/dsh-prompt-inject",
     "description": "Provide users with a custom, model-specific prompt injection feature for sending in GUI groups."
   }
 }
