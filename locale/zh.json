@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "DSH 提示词注入工具",
-    "description": "按组与模型自定义发送前后缀和 system 注入，组内 8 个位置单独开关"
+    "description": "向用户提供 GUI 下分组的自定义且区分模型的发送 Prompt 注入功能。"
   }
 }

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "@xuezuoys/dsh-prompt-inject",
-    "description": "Configure prompt injection by group and model, with per-position switches for prefixes, suffixes, and system sections."
+    "description": "Provide users with the functionality to customize and differentiate the sending of prompts by grouping them in a graphical user interface."
   }
 }
