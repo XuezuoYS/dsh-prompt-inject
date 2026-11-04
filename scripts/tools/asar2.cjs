@@ -37,7 +37,7 @@ function openAsar(file) {
   return { fd, header, base, first: first?.full }
 }
 
-const { fd, header, base } = openAsar(asarPath)
+const { fd, header, base, first } = openAsar(asarPath)
 
 function entryOf(root, p) {
   let node = root

@@ -69,7 +69,9 @@ node tests/read-session.mjs "$env:USERPROFILE\.dsh\sessions\<转义后的工作�
   persona 头 / 尾分别改写、模板字段在 system 段里渲染。
 - `verify-inject-persistence.mjs`、`verify-inject-flow.mjs`、`verify-derived-cache.mjs` 跑的是**真 SessionStore**（不是替身）。
   前者断言注入**永久保留**、一轮轮累积（第 N 轮就是 N 条）、顺序是「PREFIX → 该轮原文 → SUFFIX」、
-  工具循环不重复注入、历史里不再有空占位；`verify-inject-flow.mjs` 还覆盖两个组按顺序拼、
+  工具循环不重复注入、历史里不再有空占位；最后一节还专门复刻老版本留下的空占位，断言 pre-step
+  **不碰 surface、不写 warn**（官方 surface 只有 `append` / `replace` 两种 op，节点删不掉——这条
+  别再改成「清理」写法）；`verify-inject-flow.mjs` 还覆盖两个组按顺序拼、
   关闭组 / 关闭位置 / 空文本跳过、组级模型作用域，以及 `planRestore` 的归档判据。
 - `verify-logic.mjs`：只留 `planRestore` 的归档判据回归与 `modelRoute` 的回退链（模型键怎么来）；
   分组解析与配置校验在 `verify-groups.mjs`。

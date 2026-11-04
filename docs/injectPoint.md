@@ -49,7 +49,11 @@ system 段位参照（挑 order 时看）：
   这是有意保留注入换来的，属正常现象，不是 bug。
 - 触发条件：认领到用户消息 → 只注入，不做还原；没有用户消息（工具循环的续跑）→ 什么都不做。
 - 用户那条消息本身**不改**（它是聊天记录的真源），前后缀必须是独立消息。
-- 只剩一处扫尾：老版本留在历史里的空占位节点（`prompt-inject` 且内容为空）仍会被顺手清掉。
+- 只剩一处历史包袱：老版本留在历史里的空占位节点（`prompt-inject` 且内容为空）**删不掉，也不去动它**。
+  dsh-session 的 surface 只有 `append` 与 `{ op: 'replace', startSeq, endSeq }` 两种 op，replace 是
+  「一段节点换成一个节点」，节点数不会因此变少，删除节点没有 API。这些空占位只是模型历史里一条空的
+  user 消息（DeepSeek adapter 会跳过，别的 adapter 不保证），新版本也不会再产生新的。（老代码曾用不存在的
+  `op: 'remove'` 去清，被 try/catch 吞成每轮一条 warn，已下线。）
 
 到 provider 那边，连续的 user 消息会被 DeepSeek adapter 合并成一条 `{前置词}原文{后置词}`；pi-ai 那类不合并，是三条。
 
@@ -108,6 +112,11 @@ R3 的 △ 是路线 B 的已知代价：聊天记录里每轮多两张 `prompt-
 - 行插件挂载是**异步**的（约一 tick 后才生效）→ 段注册走全局 `section()` + 函数式 `text`，
   在 `system-prompt/assemble` 里按 `context.agent` 区分会话与模型，不按 agent 挂。
 - 作用域 ctx 上不能直接调 `agentCtx.systemPrompt.section(...)`（`cannot get property … without inject`）。
+- **surface 没有删除 op**：只有 `'append'` 与 `{ op: 'replace', startSeq, endSeq }`，而 replace 是
+  「一段节点换成一个节点」（`nodes.splice(start, len, seq)`），节点数不会因此变少；尾部节点连
+  「并进邻居」都做不到。想让历史「变短」只能靠 replace 遮蔽内容，**删除节点做不到**。
+  所以「清理 / 抹掉占位节点」这类想法直接放弃（曾经用不存在的 `op: 'remove'` 写了一遍，
+  被真 `SessionStore` 当场拒绝、又被 try/catch 吞成每轮一条 warn，2026-11-05 已下线）。
 
 ### 官方源码索引（改注入机制时按图索骥）
 
