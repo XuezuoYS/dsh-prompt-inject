@@ -2,12 +2,11 @@
 
 [![Release](https://github.com/XuezuoYS/dsh-prompt-inject/actions/workflows/publish.yml/badge.svg)](https://github.com/XuezuoYS/dsh-prompt-inject/actions/workflows/publish.yml)
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（下称 dsh）的一个插件：在设置页里，按**组**和**模型**配置要注入的提示词。
+这是一个适用于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（以下简称 DSH / dsh ）的插件，此插件提供图形界面下分组、分模型的 System 和上下文提示词接入，分组设计可有效快捷地同时将多个不同效果的提示词组合分配给不同的模型。
 
 装好之后，设置里多出一项「dsh-prompt-inject」。页面是一张张组卡片：组有名字、开关、模型作用域，下面排着 8 个注入位置。位置默认关着，点开才能写文字。组的上下顺序，就是同一个位置拼合时的先后顺序。改完自动保存，下一轮对话就用新值。
 
 - 目标适配最新 dsh rc 版本
-- 注入的位置分两类：夹在用户输入前后的**前置词 / 后置词**，和 system 里的**六个位置**。
 - 同一位置可以由多组一起拼；组还能只对某些模型生效。
 - 位置文字里可以写 `{{model}}` 这类模板字段，发送时换成这次请求的真实值。
 - 配置文件存在本地，一切改动只影响你自己。

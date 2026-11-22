@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "@xuezuoys/dsh-prompt-inject",
-    "description": "Provide users with the functionality to customize and differentiate the sending of prompts by grouping them in a graphical user interface."
+    "description": "This plugin provides grouped, per-model access to System and context prompts through on GUI. The grouping design allows multiple prompts with different effects to be combined and assigned to different models quickly and effectively at the same time."
   }
 }

@@ -1,7 +1,7 @@
 {
   "name": "@xuezuoys/dsh-prompt-inject",
   "version": "0.3.2",
-  "description": "这是一个适用于 Deepseek Harness 的插件，向用户提供 GUI 下分组的自定义且区分模型的发送 Prompt 注入功能。",
+  "description": "此插件提供图形界面下分组、分模型的 System 和上下文提示词接入，分组设计可有效快捷地同时将多个不同效果的提示词组合分配给不同的模型。",
   "private": false,
   "publishConfig": {
     "access": "public",
@@ -39,7 +39,7 @@
   },
   "meta": {
     "title": "@xuezuoys/dsh-prompt-inject",
-    "description": "在设置页按组与模型自定义发送前后缀和 system 注入"
+    "description": "此插件提供图形界面下分组、分模型的 System 和上下文提示词接入，分组设计可有效快捷地同时将多个不同效果的提示词组合分配给不同的模型。"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",
