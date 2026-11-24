@@ -1,6 +1,7 @@
 # @xuezuoys/dsh-prompt-inject
 
 [![Release](https://github.com/XuezuoYS/dsh-prompt-inject/actions/workflows/publish.yml/badge.svg)](https://github.com/XuezuoYS/dsh-prompt-inject/actions/workflows/publish.yml)
+<a href="https://awesome-dsh-plugin.com/p/XuezuoYS/dsh-prompt-inject/"><img alt="Awesome DSH Plugin" src="https://awesome-dsh-plugin.com/badge.svg"></a>
 
 适用于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（以下简称 DSH 或 dsh）的提示词注入插件，此插件提供图形界面下分组、分模型的 System 和上下文提示词接入，分组设计可有效快捷地同时将多个不同效果的提示词组合分配给不同的模型。
 
